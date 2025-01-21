@@ -1,0 +1,56 @@
+# Archivos de entorno virtual (venv, env)
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+db.sqlite3  # Si usas SQLite, ignora el archivo de base de datos
+*.sqlite3
+
+# Archivos de configuración sensibles
+.env
+*.env
+
+# Configuración de PyCharm / VSCode
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# Archivos de caché y logs
+*.log
+logs/
+*.swp
+*.swo
+*.swn
+*.swd
+
+# Archivos generados por compiladores
+*.egg-info/
+*.egg
+*.bak
+*.orig
+.DS_Store  # macOS archivos de sistema
+Thumbs.db  # Windows archivos de sistema
+
+# Archivos de migraciones innecesarios (si deseas ignorarlos localmente)
+**/migrations/*.py
+!**/migrations/__init__.py
+
+# Archivos de compilación de front-end
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Archivos estáticos generados
+staticfiles/
+media/
+assets/
+dist/
+
+# Archivos de despliegue
+*.pem
+*.crt
+*.key
