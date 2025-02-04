@@ -38,14 +38,29 @@ class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        user = request.user
-
         try:
-            if user.active_session_token:
-                refresh = RefreshToken(user.active_session_token)
-                refresh.blacklist()  # Revoca el token activo
-                user.active_session_token = None
-                user.save(update_fields=['active_session_token'])
+            refresh_token = request.data.get("refresh")
+            if not refresh_token:
+                return Response({"error": "Refresh token is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+            # 1) Blacklistear el refresh
+            try:
+                token = RefreshToken(refresh_token)
+                token.blacklist()
+            except Exception as e:
+                return Response({"error": f"Invalid refresh token: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+
+            # 2) Eliminar la sesión de la BD (Access)
+            #    Sacamos el Access token que el usuario envía en el header:
+            auth_header = request.headers.get('Authorization', '')
+            if auth_header.startswith('Bearer '):
+                current_access = auth_header.split(' ')[1]
+                # Borrar la sesión que coincida con ese access
+                from authentication.models import ActiveSession
+                ActiveSession.objects.filter(
+                    user=request.user,
+                    access_token=current_access
+                ).delete()
 
             return Response({"message": "Logout successful"}, status=status.HTTP_200_OK)
         except Exception as e:

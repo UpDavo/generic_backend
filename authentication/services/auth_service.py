@@ -1,8 +1,7 @@
 from rest_framework_simplejwt.tokens import RefreshToken
-# from django.contrib.auth import authenticate
-from authentication.models import CustomUser
+from authentication.models import CustomUser, ActiveSession
 from rest_framework import serializers
-from django.core.exceptions import ObjectDoesNotExist
+from django.contrib.auth import authenticate
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -12,38 +11,36 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 def get_tokens_for_user(user):
-    """
-    Genera nuevos tokens de acceso y refresh para el usuario.
-    Si ya tiene un token activo, lo revoca antes de generar uno nuevo.
-    """
-    # Revocar el token anterior si existe
-    if user.active_session_token:
-        try:
-            token = RefreshToken(user.active_session_token)
-            token.blacklist()  # Invalida el token anterior
-        except Exception:
-            pass  # El token ya puede estar vencido o inválido
-
-    # Generar nuevos tokens
+    # Genera un nuevo par de tokens
     refresh = RefreshToken.for_user(user)
-    user.active_session_token = str(refresh)
-    user.save(update_fields=['active_session_token'])
+    access_token_str = str(refresh.access_token)
+
+    # Verificar cuántas sesiones activas hay
+    current_sessions = ActiveSession.objects.filter(user=user).count()
+
+    # Si ya tiene 2 sesiones activas, borramos la más antigua
+    if current_sessions >= 2:
+        oldest_session = ActiveSession.objects.filter(
+            user=user).earliest('created_at')
+        oldest_session.delete()
+
+    # Crear la nueva sesión con el Access Token
+    ActiveSession.objects.create(
+        user=user,
+        access_token=access_token_str
+    )
 
     return {
         'refresh': str(refresh),
-        'access': str(refresh.access_token),
+        'access': access_token_str
     }
 
 
 def authenticate_user(email, password):
-    """
-    Verifica las credenciales del usuario y genera tokens.
-    """
-    try:
-        user = CustomUser.objects.get(email=email)
-        if user.check_password(password):
-            return get_tokens_for_user(user)
-        else:
-            raise Exception("Credenciales inválidas")
-    except ObjectDoesNotExist:
-        raise Exception("Usuario no encontrado")
+    # Esto llama al backend de auth
+    user = authenticate(username=email, password=password)
+
+    if user is not None:
+        return get_tokens_for_user(user)
+    else:
+        raise Exception("Credenciales inválidas o usuario no encontrado")
