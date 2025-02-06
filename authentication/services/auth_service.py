@@ -1,13 +1,6 @@
 from rest_framework_simplejwt.tokens import RefreshToken
-from authentication.models import CustomUser, ActiveSession
-from rest_framework import serializers
+from authentication.models import ActiveSession
 from django.contrib.auth import authenticate
-
-
-class UserSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = CustomUser
-        fields = ['id', 'username', 'email', 'phone_number', 'is_verified']
 
 
 def get_tokens_for_user(user):

@@ -1,8 +1,8 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from authentication.services.auth_service import authenticate_user, UserSerializer
-from authentication.models import CustomUser
+from authentication.services.auth_service import authenticate_user
+from authentication.serializers.user_serializer import UserSerializer
 from rest_framework.permissions import AllowAny
 from django.contrib.auth.hashers import make_password
 from rest_framework.permissions import IsAuthenticated
