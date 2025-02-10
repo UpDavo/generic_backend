@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from authentication.models import CustomUser
-from authentication.serializers import RoleSerializer, PermissionSerializer
+from .role_serializer import RoleSerializer
+from .permission_serializer import PermissionSerializer
 
 
 class UserSerializer(serializers.ModelSerializer):

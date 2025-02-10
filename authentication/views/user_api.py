@@ -1,19 +1,33 @@
 from authentication.models import CustomUser
-from authentication.serializers import UserSerializer
+from authentication.serializers import UserSerializer, UserUpdateSerializer
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.generics import ListAPIView
 
 
-class UserDetailView(APIView):
-    """Obtener un usuario con todos sus datos, roles y permisos"""
+class UserDetailUpdateView(APIView):
+    """Obtener y actualizar el usuario autenticado"""
     permission_classes = [IsAuthenticated]
 
-    def get(self, request, user_id):
-        try:
-            user = CustomUser.objects.get(id=user_id)
-            serializer = UserSerializer(user)
+    def get(self, request):
+        """Obtener los datos del usuario autenticado"""
+        serializer = UserSerializer(request.user)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def put(self, request):
+        """Actualizar la información del usuario autenticado, incluyendo el rol"""
+        serializer = UserUpdateSerializer(
+            request.user, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
             return Response(serializer.data, status=status.HTTP_200_OK)
-        except CustomUser.DoesNotExist:
-            return Response({"error": "Usuario no encontrado"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class UserListView(ListAPIView):
+    """Lista paginada de usuarios registrados"""
+    queryset = CustomUser.objects.all()
+    serializer_class = UserSerializer
+    permission_classes = [IsAuthenticated]

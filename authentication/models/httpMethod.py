@@ -1,7 +1,8 @@
 from django.db import models
+from core.models import BaseModel
 
 
-class HttpMethod(models.Model):
+class HttpMethod(BaseModel):
     HTTP_METHODS = [
         ("GET", "GET"),
         ("POST", "POST"),

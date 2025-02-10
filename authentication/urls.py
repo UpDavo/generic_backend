@@ -1,7 +1,7 @@
 from django.urls import path
 from authentication.views.auth_api import LoginView, RegisterView, LogoutView
-from authentication.views.user_api import UserDetailView
-from authentication.views.role_api import RoleCreateView
+from authentication.views.user_api import UserDetailUpdateView, UserListView
+from authentication.views.role_api import RoleListCreateView, RoleDetailView
 from authentication.views.permission_api import PermissionListCreateView, PermissionDetailView
 
 urlpatterns = [
@@ -11,7 +11,8 @@ urlpatterns = [
     path('register/', RegisterView.as_view(), name='register'),
 
     # Roles
-    path("roles/create/", RoleCreateView.as_view(), name="create-role"),
+    path("roles/", RoleListCreateView.as_view(), name="list-create-roles"),
+    path("roles/<int:pk>/", RoleDetailView.as_view(), name="detail-role"),
 
     # Permissions
     path("permissions/", PermissionListCreateView.as_view(),
@@ -20,5 +21,6 @@ urlpatterns = [
          name="detail-permission"),
 
     # userinfo
-    path("user/<int:user_id>/", UserDetailView.as_view(), name="user-detail"),
+    path("user/", UserDetailUpdateView.as_view(), name="user-detail"),
+    path("users/", UserListView.as_view(), name="user-list"),
 ]

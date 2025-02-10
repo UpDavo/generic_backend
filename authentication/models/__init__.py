@@ -1,5 +1,5 @@
-from .customUser import CustomUser
 from .activeSession import ActiveSession
-from .permission import Permission
 from .httpMethod import HttpMethod
+from .permission import Permission
 from .role import Role
+from .customUser import CustomUser

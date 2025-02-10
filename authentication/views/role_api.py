@@ -1,17 +1,30 @@
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import status
-from rest_framework.permissions import IsAdminUser
-from authentication.models import Role, Permission
+from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView
+from rest_framework.permissions import IsAuthenticated
+from authentication.models import Role
 from authentication.serializers import RoleSerializer
 
+class RoleListCreateView(ListCreateAPIView):
+    """Listar roles con paginación y crear nuevos"""
+    queryset = Role.objects.filter(deleted_at__isnull=True)
+    serializer_class = RoleSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def perform_create(self, serializer):
+        """Crear un rol y asignarle permisos opcionales"""
+        role = serializer.save()
+        permissions = self.request.data.get("permissions", [])
+        if permissions:
+            role.permissions.set(permissions)
 
-class RoleCreateView(APIView):
-    permission_classes = [IsAdminUser]
+class RoleDetailView(RetrieveUpdateDestroyAPIView):
+    """Obtener, actualizar o eliminar un rol"""
+    queryset = Role.objects.filter(deleted_at__isnull=True)
+    serializer_class = RoleSerializer
+    permission_classes = [IsAuthenticated]
 
-    def post(self, request):
-        serializer = RoleSerializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    def perform_update(self, serializer):
+        """Actualizar un rol y modificar permisos"""
+        role = serializer.save()
+        permissions = self.request.data.get("permissions", [])
+        if permissions:
+            role.permissions.set(permissions)

@@ -7,6 +7,7 @@ from rest_framework.permissions import AllowAny
 from django.contrib.auth.hashers import make_password
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
+from authentication.models import CustomUser
 
 
 class LoginView(APIView):
@@ -18,7 +19,17 @@ class LoginView(APIView):
 
         try:
             tokens = authenticate_user(email, password)
-            return Response(tokens, status=status.HTTP_200_OK)
+            user = CustomUser.objects.get(email=email)
+            user_data = UserSerializer(user).data
+
+            return Response({
+                "tokens": tokens,
+                "user": user_data
+            }, status=status.HTTP_200_OK)
+
+        except CustomUser.DoesNotExist:
+            return Response({"error": "Usuario no encontrado"}, status=status.HTTP_404_NOT_FOUND)
+
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -51,7 +62,6 @@ class LogoutView(APIView):
                 return Response({"error": f"Invalid refresh token: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
 
             # 2) Eliminar la sesión de la BD (Access)
-            #    Sacamos el Access token que el usuario envía en el header:
             auth_header = request.headers.get('Authorization', '')
             if auth_header.startswith('Bearer '):
                 current_access = auth_header.split(' ')[1]
