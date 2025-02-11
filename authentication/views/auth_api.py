@@ -1,13 +1,16 @@
+from django.http import JsonResponse
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from authentication.services.auth_service import authenticate_user
 from authentication.serializers.user_serializer import UserSerializer
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from django.contrib.auth.hashers import make_password
-from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
 from authentication.models import CustomUser
+from rest_framework_simplejwt.views import TokenRefreshView
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_exempt
 
 
 class LoginView(APIView):
@@ -22,10 +25,22 @@ class LoginView(APIView):
             user = CustomUser.objects.get(email=email)
             user_data = UserSerializer(user).data
 
-            return Response({
-                "tokens": tokens,
+            response = JsonResponse({
+                "access_token": tokens['access'],
                 "user": user_data
-            }, status=status.HTTP_200_OK)
+            })
+
+            # Guardar el refreshToken en una cookie segura HttpOnly
+            response.set_cookie(
+                key="refreshToken",
+                value=str(tokens['refresh']),
+                httponly=True,
+                secure=False,  # ⚠️ Cambia a `True` en producción
+                samesite="Lax",
+                max_age=7 * 24 * 60 * 60,  # 7 días
+            )
+
+            return response
 
         except CustomUser.DoesNotExist:
             return Response({"error": "Usuario no encontrado"}, status=status.HTTP_404_NOT_FOUND)
@@ -50,28 +65,42 @@ class LogoutView(APIView):
 
     def post(self, request):
         try:
-            refresh_token = request.data.get("refresh")
+            refresh_token = request.COOKIES.get("refreshToken")
             if not refresh_token:
-                return Response({"error": "Refresh token is required"}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({"error": "No refresh token found"}, status=status.HTTP_400_BAD_REQUEST)
 
-            # 1) Blacklistear el refresh
+            # Blacklistear el refreshToken
             try:
                 token = RefreshToken(refresh_token)
                 token.blacklist()
             except Exception as e:
                 return Response({"error": f"Invalid refresh token: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
 
-            # 2) Eliminar la sesión de la BD (Access)
-            auth_header = request.headers.get('Authorization', '')
-            if auth_header.startswith('Bearer '):
-                current_access = auth_header.split(' ')[1]
-                # Borrar la sesión que coincida con ese access
-                from authentication.models import ActiveSession
-                ActiveSession.objects.filter(
-                    user=request.user,
-                    access_token=current_access
-                ).delete()
+            # Eliminar la cookie del refreshToken
+            response = Response(
+                {"message": "Logout successful"}, status=status.HTTP_200_OK)
+            response.delete_cookie("refreshToken")
 
-            return Response({"message": "Logout successful"}, status=status.HTTP_200_OK)
+            return response
+
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class CustomTokenRefreshView(TokenRefreshView):
+    permission_classes = [AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        refresh_token = request.COOKIES.get("refreshToken")
+
+        if not refresh_token:
+            return JsonResponse({"error": "No refresh token found"}, status=401)
+
+        try:
+            refresh = RefreshToken(refresh_token)
+            access_token = str(refresh.access_token)
+
+            return JsonResponse({"access_token": access_token})
+        except Exception:
+            return JsonResponse({"error": "Invalid refresh token"}, status=401)

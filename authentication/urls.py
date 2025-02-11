@@ -1,5 +1,5 @@
 from django.urls import path
-from authentication.views.auth_api import LoginView, RegisterView, LogoutView
+from authentication.views.auth_api import LoginView, RegisterView, LogoutView, CustomTokenRefreshView
 from authentication.views.user_api import UserDetailUpdateView, UserListView
 from authentication.views.role_api import RoleListCreateView, RoleDetailView
 from authentication.views.permission_api import PermissionListCreateView, PermissionDetailView
@@ -9,6 +9,7 @@ urlpatterns = [
     path('login/', LoginView.as_view(), name='login'),
     path('logout/', LogoutView.as_view(), name='logout'),
     path('register/', RegisterView.as_view(), name='register'),
+    path("refresh/", CustomTokenRefreshView.as_view(), name="token-refresh"),
 
     # Roles
     path("roles/", RoleListCreateView.as_view(), name="list-create-roles"),
