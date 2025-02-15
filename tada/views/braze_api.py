@@ -7,7 +7,7 @@ from django.conf import settings
 from django.utils.timezone import now
 from tada.models import NotificationMessage, NotificationLog
 
-BRAZE_API_URL = "https://rest.iad-05.braze.com"
+BRAZE_API_URL = settings.BRAZE_URL
 BRAZE_KEY = settings.BRAZE_KEY
 
 
@@ -24,8 +24,8 @@ class SendMessage(APIView):
         try:
             # Obtener mensaje desde el modelo NotificationMessage
             try:
-                message_obj = NotificationMessage.objects.get(
-                    notification_type=notification_type)
+                message_obj = NotificationMessage.objects.filter(
+                    notification_type=notification_type, deleted_at__isnull=True).first()
                 message_text = message_obj.message
             except NotificationMessage.DoesNotExist:
                 return Response({"error": "Error al enviar la notificación", "details": "Tipo de mensaje no existe"}, status=status.HTTP_404_NOT_FOUND)
@@ -57,13 +57,13 @@ class SendMessage(APIView):
                 "external_user_ids": [external_id],
                 "messages": {
                     "apple_push": {
-                        "alert": message_text,
+                        "alert": {"title": "Mensaje de TaDa", "body": message_text},
                         "sound": "default",
                         "badge": 1,
                         "content-available": True
                     },
                     "android_push": {
-                        "alert": message_text,
+                        "alert": {"title": "Mensaje de TaDa", "body": message_text},
                         "sound": "default",
                         "priority": "high",
                         "notification_channel": "default_channel"

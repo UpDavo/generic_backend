@@ -5,18 +5,18 @@ from tada.serializers import NotificationMessageSerializer, NotificationLogSeria
 
 
 class NotificationMessageListCreateView(ListCreateAPIView):
-    queryset = NotificationMessage.objects.all()
+    queryset = NotificationMessage.objects.filter(deleted_at__isnull=True)
     serializer_class = NotificationMessageSerializer
     permission_classes = [IsAuthenticated]
 
 
 class NotificationMessageRetrieveUpdateDestroyView(RetrieveUpdateDestroyAPIView):
-    queryset = NotificationMessage.objects.all()
+    queryset = NotificationMessage.objects.filter(deleted_at__isnull=True)
     serializer_class = NotificationMessageSerializer
     permission_classes = [IsAuthenticated]
 
 
 class NotificationLogListView(ListAPIView):
-    queryset = NotificationLog.objects.all()
+    queryset = NotificationLog.objects.filter(deleted_at__isnull=True)
     serializer_class = NotificationLogSerializer
     permission_classes = [IsAuthenticated]
