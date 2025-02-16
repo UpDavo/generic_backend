@@ -1,6 +1,5 @@
 from django.urls import path
-from tada.views.braze_api import SendMessage
-from tada.views.messages_api import NotificationMessageListCreateView, NotificationMessageRetrieveUpdateDestroyView, NotificationLogListView
+from tada.views import *
 
 urlpatterns = [
     # Push
@@ -12,5 +11,7 @@ urlpatterns = [
     path('notifications/<int:pk>/',
          NotificationMessageRetrieveUpdateDestroyView.as_view(), name='notification-detail'),
     path('notification-logs/', NotificationLogListView.as_view(),
+         name='notification-log-list'),
+    path('notification-logs/report/', NotificationLogRangeView.as_view(),
          name='notification-log-list'),
 ]

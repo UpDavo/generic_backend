@@ -1,6 +1,6 @@
 from django.urls import path
 from authentication.views.auth_api import LoginView, RegisterView, LogoutView, CustomTokenRefreshView
-from authentication.views.user_api import UserDetailUpdateView, UserListView
+from authentication.views.user_api import UserDetailUpdateView, UserListView, UserListAllView
 from authentication.views.role_api import RoleListCreateView, RoleDetailView
 from authentication.views.permission_api import PermissionListCreateView, PermissionDetailView
 
@@ -24,4 +24,5 @@ urlpatterns = [
     # userinfo
     path("user/", UserDetailUpdateView.as_view(), name="user-detail"),
     path("users/", UserListView.as_view(), name="user-list"),
+    path("users/all/", UserListAllView.as_view(), name="user-list-all"),
 ]
