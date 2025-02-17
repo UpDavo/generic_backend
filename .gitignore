@@ -54,3 +54,5 @@ dist/
 *.pem
 *.crt
 *.key
+
+*.txt
