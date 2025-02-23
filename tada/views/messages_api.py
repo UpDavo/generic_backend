@@ -1,8 +1,8 @@
-from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView, ListAPIView
+from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView, ListAPIView, RetrieveAPIView
 from rest_framework.permissions import IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
-from tada.models import NotificationMessage, NotificationLog
-from tada.serializers import NotificationMessageSerializer, NotificationLogSerializer
+from tada.models import NotificationMessage, NotificationLog, Price
+from tada.serializers import NotificationMessageSerializer, NotificationLogSerializer, PriceSerializer
 import django_filters
 from authentication.models import CustomUser
 
@@ -49,6 +49,21 @@ class NotificationMessageFilter(django_filters.FilterSet):
     class Meta:
         model = NotificationMessage
         fields = ["name"]
+
+
+class PriceListCreateView(ListCreateAPIView):
+    queryset = Price.objects.filter(deleted_at__isnull=True)
+    serializer_class = PriceSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = None
+
+
+class PriceLastView(RetrieveAPIView):
+    serializer_class = PriceSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_object(self):
+        return Price.objects.filter(deleted_at__isnull=True).order_by('-month').first()
 
 
 class NotificationMessageListCreateView(ListCreateAPIView):

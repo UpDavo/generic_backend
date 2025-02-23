@@ -10,6 +10,12 @@ urlpatterns = [
          name='notification-list-create'),
     path('notifications/<int:pk>/',
          NotificationMessageRetrieveUpdateDestroyView.as_view(), name='notification-detail'),
+
+    # logs
+    path('prices/', PriceListCreateView.as_view(),
+         name='price-list'),
+    path('prices/last/', PriceLastView.as_view(),
+         name='price-last'),
     path('notification-logs/', NotificationLogListView.as_view(),
          name='notification-log-list'),
     path('notification-logs/report/', NotificationLogRangeView.as_view(),
