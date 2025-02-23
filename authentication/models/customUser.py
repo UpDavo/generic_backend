@@ -19,8 +19,8 @@ class CustomUser(AbstractUser):
         blank=True
     )
 
-    USERNAME_FIELD = 'email'  # 🔥 Ahora `email` será el identificador único
-    REQUIRED_FIELDS = []  # 🔥 Elimina `username` de los campos requeridos
+    USERNAME_FIELD = 'email'
+    REQUIRED_FIELDS = []
 
     objects = CustomUserManager()
 
