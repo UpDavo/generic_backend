@@ -27,6 +27,7 @@ class SendMessage(APIView):
                 message_obj = NotificationMessage.objects.filter(
                     notification_type=notification_type, deleted_at__isnull=True).first()
                 message_text = message_obj.message
+                message_title = message_obj.title if message_obj.title else "Mensaje de TaDa"
             except NotificationMessage.DoesNotExist:
                 return Response({"error": "Error al enviar la notificación", "details": "Tipo de mensaje no existe"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -57,13 +58,13 @@ class SendMessage(APIView):
                 "external_user_ids": [external_id],
                 "messages": {
                     "apple_push": {
-                        "alert": {"title": "Mensaje de TaDa", "body": message_text},
+                        "alert": {"title": message_title, "body": message_text},
                         "sound": "default",
                         "badge": 1,
                         "content-available": True
                     },
                     "android_push": {
-                        "alert": {"title": "Mensaje de TaDa", "body": message_text},
+                        "alert": {"title":message_title, "body": message_text},
                         "sound": "default",
                         "priority": "high",
                         "notification_channel": "default_channel"
