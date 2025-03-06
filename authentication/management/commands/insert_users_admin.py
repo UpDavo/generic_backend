@@ -8,6 +8,8 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         users_data = [
             ('Anthony Villegas', 'updavo@heimdal.ec'),
+            ('Jose Luis Sanchez', 'jsanchez@heimdal.ec'),
+            ('Erick Jaramillo', 'ejaramillo@heimdal.ec'),
         ]
 
         # Obtener el rol 'Store'
