@@ -33,10 +33,11 @@ class LoginView(APIView):
             # Guardar el refreshToken en una cookie segura HttpOnly
             response.set_cookie(
                 key="refreshToken",
-                value=str(tokens['refresh']),
+                value=str(tokens["refresh"]),
                 httponly=True,
-                secure=True,        # Asumiendo que tu app está sobre HTTPS
-                samesite="None",    # Necesario para uso entre distintos dominios
+                secure=True,
+                samesite="None",
+                domain=".heimdal.ec",
                 max_age=7 * 24 * 60 * 60,
             )
 
