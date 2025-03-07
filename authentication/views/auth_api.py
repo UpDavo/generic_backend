@@ -36,7 +36,7 @@ class LoginView(APIView):
                 value=str(tokens['refresh']),
                 httponly=True,
                 secure=True,
-                samesite="Lax",
+                samesite="None",
                 max_age=7 * 24 * 60 * 60,  # 7 días
             )
 
