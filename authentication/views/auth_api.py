@@ -35,9 +35,9 @@ class LoginView(APIView):
                 key="refreshToken",
                 value=str(tokens['refresh']),
                 httponly=True,
-                secure=True,
-                samesite="None",
-                max_age=7 * 24 * 60 * 60,  # 7 días
+                secure=True,        # Asumiendo que tu app está sobre HTTPS
+                samesite="None",    # Necesario para uso entre distintos dominios
+                max_age=7 * 24 * 60 * 60,
             )
 
             return response
