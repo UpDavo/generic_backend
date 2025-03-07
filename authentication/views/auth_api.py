@@ -30,7 +30,7 @@ class LoginView(APIView):
                 "user": user_data
             })
 
-            # Guardar el refreshToken en una cookie segura HttpOnly
+            # Guardar el refreshToken en una cookie segura SI
             response.set_cookie(
                 key="refreshToken",
                 value=str(tokens["refresh"]),
