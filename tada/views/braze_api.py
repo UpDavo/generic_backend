@@ -64,7 +64,8 @@ class SendMessage(APIView):
                         "content-available": True
                     },
                     "android_push": {
-                        "alert": {"title":message_title, "body": message_text},
+                        "alert": message_text,
+                        "title": message_title,
                         "sound": "default",
                         "priority": "high",
                         "notification_channel": "default_channel"
