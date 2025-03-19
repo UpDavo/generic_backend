@@ -9,4 +9,4 @@ class NotificationLogSerializer(serializers.ModelSerializer):
     class Meta:
         model = NotificationLog
         fields = ["id", "email", "notification_type",
-                  "message", "sent_at", "user"]
+                  "message", "sent_at", "user", "title"]

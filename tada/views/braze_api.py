@@ -85,6 +85,7 @@ class SendMessage(APIView):
                 user=request.user,
                 email=email,
                 notification_type=notification_type,
+                title=message_title,
                 message=message_text,
                 sent_at=now()
             )
