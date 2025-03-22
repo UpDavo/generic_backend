@@ -1,3 +1,4 @@
+from datetime import datetime
 import requests
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -18,6 +19,33 @@ class SendMessage(APIView):
         email = request.data.get('email')
         notification_type = request.data.get('notification_type')
 
+        def get_most_recent_external_id(users):
+            valid_users = []
+
+            for user in users:
+                apps = user.get("apps", [])
+                if not apps:
+                    continue
+
+                try:
+                    latest_app = max(apps, key=lambda app: app.get("last_used", ""))
+                    last_used_dt = datetime.fromisoformat(latest_app["last_used"].replace("Z", "+00:00"))
+                    valid_users.append((user, last_used_dt))
+                except (ValueError, KeyError):
+                    continue
+
+            if not valid_users:
+                raise ValueError("No se encontraron usuarios con apps activas.")
+
+            most_recent_user = max(valid_users, key=lambda item: item[1])[0]
+            external_id = most_recent_user.get("external_id")
+
+            if not external_id:
+                raise ValueError("El usuario con apps más recientes tiene cuenta duplicada.")
+
+            return external_id
+
+
         if not email or not notification_type:
             return Response({"error": "Se requiere email y tipo de notificación"}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -37,7 +65,12 @@ class SendMessage(APIView):
             user_data_payload = {
                 "email_address": email,
                 "fields_to_export": [
-                    "first_name", "custom_attributes", "phone", "braze_id", "external_id", "user_aliases", "apps"
+                    "first_name",
+                    "phone",
+                    "braze_id",
+                    "external_id",
+                    "user_aliases",
+                    "apps"
                 ]
             }
             user_response = requests.post(
@@ -47,11 +80,15 @@ class SendMessage(APIView):
             if "users" not in user_response_data or not user_response_data["users"]:
                 return Response({"error": "Usuario no encontrado en Braze"}, status=status.HTTP_404_NOT_FOUND)
 
-            user_info = user_response_data["users"][0]
-            external_id = user_info.get("external_id")
+            users = user_response_data["users"]
+            # external_id = get_most_recent_external_id(users)
 
-            if not external_id:
-                return Response({"error": "El usuario no tiene un external_id válido"}, status=status.HTTP_400_BAD_REQUEST)
+            try:
+                external_id = get_most_recent_external_id(users)
+                # print("id seleccionado: ", external_id)
+            except ValueError as e:
+                return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
 
             # Enviar mensaje push
             message_payload = {
