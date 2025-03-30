@@ -1,28 +1,41 @@
+import random
+import string
 from django.core.management.base import BaseCommand
 from authentication.models import CustomUser, Role
 
 
 class Command(BaseCommand):
-    help = 'Inserta masivamente usuarios en la base de datos con rol Store'
+    help = 'Inserta masivamente usuarios en la base de datos con rol Customer Service'
+
+    def generate_password(self, length=8):
+        chars = string.ascii_letters + string.digits
+        return ''.join(random.choices(chars, k=length))
 
     def handle(self, *args, **options):
         users_data = [
-            ('Anthony Villegas', 'updavo@heimdal.ec'),
-            ('Jose Luis Sanchez', 'jsanchez@heimdal.ec'),
-            ('Erick Jaramillo', 'ejaramillo@heimdal.ec'),
+            # ('Anthony Villegas', 'updavo@heimdal.ec'),
+            # ('Jose Luis Sanchez', 'jsanchez@heimdal.ec'),
+            # ('Erick Jaramillo', 'ejaramillo@heimdal.ec'),
+            ('Jocelyne Carrillo', 'jocelyne.carrillo@ab-inbev.com'),
+            ('Ulises Hernandez', 'edgar.hernandez.a@ab-inbev.com'),
         ]
 
-        # Obtener el rol 'Store'
-        store_role = Role.objects.get(name='Admin')
+        # Obtener el rol 'Customer Service'
+        try:
+            cs_role = Role.objects.get(name='Customer Service')
+        except Role.DoesNotExist:
+            self.stdout.write(self.style.ERROR(
+                'El rol "Customer Service" no existe.'))
+            return
 
         for name, email in users_data:
-            password = name.lower().replace(" ", "") + "123"
+            password = self.generate_password()
             user, created = CustomUser.objects.get_or_create(
                 email=email,
                 defaults={
                     'first_name': name,
                     'last_name': '',
-                    'role': store_role,
+                    'role': cs_role,
                 }
             )
             if created:
@@ -32,7 +45,7 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.SUCCESS(
                     f'Usuario creado: {email} | Contraseña: {password}'))
             else:
-                user.role = store_role
+                user.role = cs_role
                 user.save()
                 self.stdout.write(self.style.WARNING(
-                    f'El usuario ya existe y se asignó el rol Store: {email}'))
+                    f'El usuario ya existe y se asignó el rol Customer Service: {email}'))

@@ -51,6 +51,26 @@ class Command(BaseCommand):
                     "Enviar Push"
                 ],
                 "is_admin": False
+            },
+            {
+                "name": "Data",
+                "description": "Rol de Datos",
+                "permissions": [
+                    "Enviar Push",
+                    "Crear Push",
+                    "Ver Logs",
+                    "Dashboard"
+                ],
+                "is_admin": False
+            },
+            {
+                "name": "Customer Service",
+                "description": "Soporte al Cliente",
+                "permissions": [
+                    "Enviar Push",
+                    "Ver Logs"
+                ],
+                "is_admin": False
             }
         ]
 
