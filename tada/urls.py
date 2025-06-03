@@ -20,6 +20,8 @@ urlpatterns = [
          name='notification-log-list'),
     path('notification-logs/report/', NotificationLogRangeView.as_view(),
          name='notification-log-list'),
+    path('notification-logs/report/download', NotificationLogDownloadView.as_view(),
+         name='notification-log-download'),
 
     # Pocs
     path('pocs/report/', PocAPI.as_view(),

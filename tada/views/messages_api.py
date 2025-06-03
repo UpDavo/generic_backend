@@ -1,4 +1,8 @@
+from io import BytesIO
+from django.http import HttpResponse
+import openpyxl
 from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView, ListAPIView, RetrieveAPIView
+from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
 from tada.models import NotificationMessage, NotificationLog, Price
@@ -98,3 +102,47 @@ class NotificationLogRangeView(ListAPIView):
     filter_backends = [DjangoFilterBackend]
     filterset_class = NotificationLogRangeFilter
     pagination_class = None
+
+
+class NotificationLogDownloadView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        # Aplicar filtros
+        f = NotificationLogRangeFilter(request.GET, queryset=NotificationLog.objects.filter(
+            deleted_at__isnull=True).select_related("user").order_by("-sent_at"))
+        logs = f.qs
+
+        # Crear workbook
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Logs de notificación"
+
+        # Cabeceras
+        headers = ["Email", "Tipo", "Mensaje",
+                   "Fecha de envío", "Usuario", "Título"]
+        ws.append(headers)
+
+        # Contenido
+        for log in logs:
+            ws.append([
+                log.email,
+                log.notification_type,
+                log.message,
+                log.sent_at.strftime(
+                    "%Y-%m-%d %H:%M:%S") if log.sent_at else "",
+                log.user.email if log.user else "",
+                log.title,
+            ])
+
+        # Preparar archivo
+        output = BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        response = HttpResponse(
+            output,
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+        response['Content-Disposition'] = f'attachment; filename=notification_logs.xlsx'
+        return response
