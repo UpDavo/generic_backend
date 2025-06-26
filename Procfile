@@ -1,0 +1,1 @@
+web: gunicorn back_end_django.wsgi

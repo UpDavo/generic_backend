@@ -30,14 +30,15 @@ class LoginView(APIView):
                 "user": user_data
             })
 
-            # Guardar el refreshToken en una cookie segura HttpOnly
+            # Guardar el refreshToken en una cookie segura SI
             response.set_cookie(
                 key="refreshToken",
-                value=str(tokens['refresh']),
+                value=str(tokens["refresh"]),
                 httponly=True,
-                secure=False,  # ⚠️ Cambia a `True` en producción
-                samesite="Lax",
-                max_age=7 * 24 * 60 * 60,  # 7 días
+                secure=True,
+                samesite="None",
+                domain=".heimdal.ec",
+                max_age=7 * 24 * 60 * 60,
             )
 
             return response
@@ -101,6 +102,16 @@ class CustomTokenRefreshView(TokenRefreshView):
             refresh = RefreshToken(refresh_token)
             access_token = str(refresh.access_token)
 
-            return JsonResponse({"access_token": access_token})
-        except Exception:
-            return JsonResponse({"error": "Invalid refresh token"}, status=401)
+            # Obtener el user_id desde el refresh token
+            user_id = refresh.payload.get('user_id')
+            user = CustomUser.objects.get(id=user_id)
+            user_data = UserSerializer(user).data
+
+            return JsonResponse({
+                "access_token": access_token,
+                "user": user_data
+            })
+        except CustomUser.DoesNotExist:
+            return JsonResponse({"error": "User not found"}, status=404)
+        except Exception as e:
+            return JsonResponse({"error": f"Invalid refresh token: {str(e)}"}, status=401)

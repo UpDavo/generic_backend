@@ -1,7 +1,13 @@
-from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView
+from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView, ListAPIView
 from rest_framework.permissions import IsAuthenticated
 from authentication.models import Role
 from authentication.serializers import RoleSerializer
+
+class RoleListAllView(ListAPIView):
+    queryset = Role.objects.filter(deleted_at__isnull=True)
+    serializer_class = RoleSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = None
 
 class RoleListCreateView(ListCreateAPIView):
     """Listar roles con paginación y crear nuevos"""

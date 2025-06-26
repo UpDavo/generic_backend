@@ -1,10 +1,11 @@
 from authentication.models import CustomUser
-from authentication.serializers import UserSerializer, UserUpdateSerializer
+from authentication.serializers import UserSerializer, UserUpdateSerializer, UserUpdateSerializer2
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.generics import ListAPIView
+from rest_framework.generics import ListAPIView, ListCreateAPIView, RetrieveUpdateDestroyAPIView
+from django.contrib.auth.hashers import make_password
 
 
 class UserDetailUpdateView(APIView):
@@ -26,8 +27,46 @@ class UserDetailUpdateView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-class UserListView(ListAPIView):
+class UserListCreateView(ListCreateAPIView):
+    """Lista paginada y creación de usuarios"""
+    queryset = CustomUser.objects.all()
+    serializer_class = UserUpdateSerializer2
+    permission_classes = [IsAuthenticated]
+
+    def perform_create(self, serializer):
+        # Hashea la contraseña antes de guardar
+        password = serializer.validated_data.get('password')
+        if password:
+            serializer.save(password=make_password(password))
+        else:
+            serializer.save()
+
+
+class UserRetrieveUpdateDestroyView(RetrieveUpdateDestroyAPIView):
+    """Obtener, actualizar o eliminar un usuario"""
+    queryset = CustomUser.objects.all()
+    serializer_class = UserUpdateSerializer2
+    permission_classes = [IsAuthenticated]
+
+    def perform_update(self, serializer):
+        # Maneja el hasheo de la contraseña si se actualiza
+        password = self.request.data.get('password', None)
+        if password:
+            serializer.save(password=make_password(password))
+        else:
+            serializer.save()
+
+
+# class UserListView(ListAPIView):
+#     """Lista paginada de usuarios registrados"""
+#     queryset = CustomUser.objects.all()
+#     serializer_class = UserSerializer
+#     permission_classes = [IsAuthenticated]
+
+
+class UserListAllView(ListAPIView):
     """Lista paginada de usuarios registrados"""
     queryset = CustomUser.objects.all()
     serializer_class = UserSerializer
     permission_classes = [IsAuthenticated]
+    pagination_class = None

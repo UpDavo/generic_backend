@@ -1,4 +1,3 @@
-from django.apps import apps
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 from authentication.managers import CustomUserManager
@@ -6,6 +5,7 @@ from authentication.models.role import Role
 
 
 class CustomUser(AbstractUser):
+    username = None  # 🔥 Elimina el campo `username` heredado de `AbstractUser`
     email = models.EmailField(unique=True)
     phone_number = models.CharField(max_length=15, blank=True, null=True)
     active_session_token = models.CharField(
@@ -20,7 +20,7 @@ class CustomUser(AbstractUser):
     )
 
     USERNAME_FIELD = 'email'
-    REQUIRED_FIELDS = ['username']
+    REQUIRED_FIELDS = []
 
     objects = CustomUserManager()
 
