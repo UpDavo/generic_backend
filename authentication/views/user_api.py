@@ -5,7 +5,6 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.generics import ListAPIView, ListCreateAPIView, RetrieveUpdateDestroyAPIView
-from django.contrib.auth.hashers import make_password
 
 
 class UserDetailUpdateView(APIView):
@@ -33,13 +32,8 @@ class UserListCreateView(ListCreateAPIView):
     serializer_class = UserUpdateSerializer2
     permission_classes = [IsAuthenticated]
 
-    def perform_create(self, serializer):
-        # Hashea la contraseña antes de guardar
-        password = serializer.validated_data.get('password')
-        if password:
-            serializer.save(password=make_password(password))
-        else:
-            serializer.save()
+    # El serializer ya maneja el hasheo de la contraseña en su método create()
+    # No necesitamos perform_create
 
 
 class UserRetrieveUpdateDestroyView(RetrieveUpdateDestroyAPIView):
@@ -48,13 +42,8 @@ class UserRetrieveUpdateDestroyView(RetrieveUpdateDestroyAPIView):
     serializer_class = UserUpdateSerializer2
     permission_classes = [IsAuthenticated]
 
-    def perform_update(self, serializer):
-        # Maneja el hasheo de la contraseña si se actualiza
-        password = self.request.data.get('password', None)
-        if password:
-            serializer.save(password=make_password(password))
-        else:
-            serializer.save()
+    # El serializer ya maneja el hasheo de la contraseña en su método update()
+    # No necesitamos perform_update
 
 
 # class UserListView(ListAPIView):
