@@ -3,7 +3,8 @@ from tada.views import *
 
 urlpatterns = [
     # Push
-    path('send/push/', SendMessage.as_view(), name='send'),
+    path('send/push/', SendMessage.as_view(), name='send-push'),
+    path('send/campaign/', SendPushCampaign.as_view(), name='send-campaign'),
 
     # Messages
     path('notifications/', NotificationMessageListCreateView.as_view(),
