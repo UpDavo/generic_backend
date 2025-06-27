@@ -1,3 +1,6 @@
 from .notificationLog import NotificationLog
 from .notificationMessage import NotificationMessage
 from .price import Price
+from .canvasMessage import CanvasMessage
+from .canvasLog import CanvasLog
+from .app_price import AppPrice

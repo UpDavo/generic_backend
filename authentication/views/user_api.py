@@ -32,25 +32,12 @@ class UserListCreateView(ListCreateAPIView):
     serializer_class = UserUpdateSerializer2
     permission_classes = [IsAuthenticated]
 
-    # El serializer ya maneja el hasheo de la contraseña en su método create()
-    # No necesitamos perform_create
-
 
 class UserRetrieveUpdateDestroyView(RetrieveUpdateDestroyAPIView):
     """Obtener, actualizar o eliminar un usuario"""
     queryset = CustomUser.objects.all()
     serializer_class = UserUpdateSerializer2
     permission_classes = [IsAuthenticated]
-
-    # El serializer ya maneja el hasheo de la contraseña en su método update()
-    # No necesitamos perform_update
-
-
-# class UserListView(ListAPIView):
-#     """Lista paginada de usuarios registrados"""
-#     queryset = CustomUser.objects.all()
-#     serializer_class = UserSerializer
-#     permission_classes = [IsAuthenticated]
 
 
 class UserListAllView(ListAPIView):
