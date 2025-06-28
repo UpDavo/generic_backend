@@ -4,7 +4,7 @@ from tada.views import *
 urlpatterns = [
     # Push
     path('send/push/', SendMessage.as_view(), name='send-push'),
-    path('send/campaign/', SendPushCampaign.as_view(), name='send-campaign'),
+    path('send/canvas/', SendPushCanvas.as_view(), name='send-canvas'),
 
     # Messages
     path('notifications/', NotificationMessageListCreateView.as_view(),
@@ -47,5 +47,6 @@ urlpatterns = [
     # app prices
     path('app-prices/', AppPriceListCreateView.as_view(),
          name='app-price-list-create'),
-    path('app-prices/by-name/<str:name>/', AppPriceByNameView.as_view(), name='app-price-by-name'),
+    path('app-prices/by-name/<str:name>/',
+         AppPriceByNameView.as_view(), name='app-price-by-name'),
 ]

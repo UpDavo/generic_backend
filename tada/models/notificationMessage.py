@@ -9,4 +9,4 @@ class NotificationMessage(BaseModel):
     message = models.TextField()
 
     def __str__(self):
-        return f"{self.type}: {self.message}"
+        return f"{self.notification_type}: {self.message}"
