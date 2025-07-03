@@ -1,5 +1,7 @@
 from django.urls import path
 from tada.views import *
+from tada.views.logs_stats_api import NotificationLogsStatsView, CanvasLogsStatsView, CombinedLogsStatsView
+from tada.views.price_history_api import PriceHistoryByAppView, AllAppsLatestPricesView, PriceComparisonView
 
 urlpatterns = [
     # Push
@@ -44,9 +46,27 @@ urlpatterns = [
     path('pocs/report/', PocAPI.as_view(),
          name='poc-report'),
 
-    # app prices
+    # app prices (CRUD básico - usa Price existente por ID)
     path('app-prices/', AppPriceListCreateView.as_view(),
          name='app-price-list-create'),
+    path('app-prices/<int:pk>/',
+         AppPriceRetrieveUpdateDestroyView.as_view(), name='app-price-detail'),
     path('app-prices/by-name/<str:name>/',
          AppPriceByNameView.as_view(), name='app-price-by-name'),
+
+    # app prices con Price anidado (permite crear/editar Price junto con AppPrice)
+    path('app-prices-with-price/', AppPriceWithPriceListCreateView.as_view(),
+         name='app-price-with-price-list-create'),
+    path('app-prices-with-price/<int:pk>/',
+         AppPriceWithPriceRetrieveUpdateDestroyView.as_view(), name='app-price-with-price-detail'),
+
+    # Estadísticas de logs por usuario con precios
+    path('notification-logs/stats/', NotificationLogsStatsView.as_view(), name='notification-logs-stats'),
+    path('canvas-logs/stats/', CanvasLogsStatsView.as_view(), name='canvas-logs-stats'),
+    path('logs/combined-stats/', CombinedLogsStatsView.as_view(), name='combined-logs-stats'),
+    
+    # Historial de precios por app
+    path('prices/history/<str:app>/', PriceHistoryByAppView.as_view(), name='price-history-by-app'),
+    path('prices/latest-all/', AllAppsLatestPricesView.as_view(), name='latest-prices-all-apps'),
+    path('prices/comparison/<str:app>/', PriceComparisonView.as_view(), name='price-comparison'),
 ]

@@ -3,3 +3,4 @@ from .notification_log_serializer import NotificationLogSerializer
 from .price_serializer import PriceSerializer
 from .canvas_message_serializer import CanvasMessageSerializer
 from .canvas_log_serializer import CanvasLogSerializer
+from .app_price_serializer import AppPriceSerializer, AppPriceWithPriceSerializer
