@@ -196,3 +196,16 @@ class BrazeService:
             f"{BRAZE_API_URL}/canvas/trigger/send", json=message_payload, headers=self.headers)
         message_response_data = message_response.json()
         return message_response_data, message_response
+
+    def get_data_series(self, event_id, length, ending_at=None, unit=None):
+
+        url_params = {
+            "event": event_id,
+            "length": length,
+            "ending_at": ending_at.isoformat() if ending_at else None,
+            "unit": unit if unit else "day"
+        }
+        message_response = requests.get(
+            f"{BRAZE_API_URL}/events/data_series", params=url_params, headers=self.headers)
+        message_response_data = message_response.json()
+        return message_response_data, message_response
