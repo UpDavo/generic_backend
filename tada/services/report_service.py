@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 from tada.models.trafficLog import TrafficLog
 from core.utils.emailThread import EmailThread
+from core.models import EmailNotification, EmailNotificationType
 
 
 class ReportService:
@@ -280,12 +281,13 @@ class ReportService:
             if ultima_hora_hoy:
                 subject += f" - {ultima_hora_hoy}"
 
-            # Enviar el correo con tu clase personalizada
-            EmailThread(
+            # Enviar el correo usando el nuevo método con TRAFFIC_REPORT
+            EmailNotification.send_notification_by_type_constant(
+                email_template='email/hourly_variation.html',
                 subject=subject,
                 email_data=email_data,
-                recipient_list=['updavo@gmail.com'],
-                template='email/hourly_variation.html'
-            ).start()
+                notification_type_constant=EmailNotificationType.TRAFFIC_REPORT
+            )
+            
         except Exception as e:
             print(f"Error al enviar el reporte por email: {e}")

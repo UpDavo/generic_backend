@@ -6,5 +6,6 @@ from tada.urls import urlpatterns as tada_urls
 urlpatterns = [
     path('auth/', include(auth_urls)),
     path('tada/', include(tada_urls)),
+    path('core/', include('core.urls')),
     path('admin/', admin.site.urls),
 ]
