@@ -511,7 +511,8 @@ class ReportService:
                 'meta_count': 0,
                 'achievement_percentage': 0,
                 'difference': 0,
-                'status': 'no_meta'
+                'status': 'no_meta',
+                'meta_id': None
             }
 
         # Obtener el último registro del día (tráfico acumulado) usando datos ya procesados
@@ -550,5 +551,6 @@ class ReportService:
             'achievement_percentage': achievement_percentage,
             'difference': difference,
             'status': status,
-            'last_hour_with_data': last_hour_with_data
+            'last_hour_with_data': last_hour_with_data,
+            'meta_id': daily_meta.id
         }
