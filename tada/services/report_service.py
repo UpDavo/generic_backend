@@ -526,12 +526,16 @@ class ReportService:
                 last_hour_with_data = hour_data['hora']
                 break
 
-        # Calcular porcentaje de cumplimiento
+        # Calcular porcentaje de cumplimiento como cuánto falta para llegar a la meta (negativo si falta, positivo si supera)
         meta_count = daily_meta.target_count
         achievement_percentage = 0
         if meta_count > 0:
-            achievement_percentage = round((real_count / meta_count) * 100, 2)
-
+            # Fórmula: (real - meta) / meta * 100
+            # Si real < meta: resultado negativo (falta)
+            # Si real = meta: resultado 0 (cumplido exacto)
+            # Si real > meta: resultado positivo (superado)
+            achievement_percentage = round(
+                ((real_count - meta_count) / meta_count) * 100, 2)
         # Calcular diferencia
         difference = real_count - meta_count
 
