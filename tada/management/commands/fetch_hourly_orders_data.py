@@ -15,17 +15,68 @@ class Command(BaseCommand):
         guayaquil_tz = pytz.timezone('America/Guayaquil')
         return timezone.now().astimezone(guayaquil_tz)
 
+    def is_in_operating_hours(self, current_datetime):
+        """
+        Valida si el comando puede ejecutarse según los horarios de operación por día
+        Lunes: 12:00-23:00
+        Martes: 09:00-23:00
+        Miércoles: 09:00-24:00
+        Jueves: 09:00-01:00 (del día siguiente)
+        Viernes: 08:00-02:00 (del día siguiente)
+        Sábado: 08:00-02:00 (del día siguiente)
+        Domingo: 08:00-22:00
+        """
+        day_of_week = current_datetime.isoweekday()  # 1=lunes, 7=domingo
+        current_hour = current_datetime.hour
+
+        if day_of_week == 1:  # Lunes
+            return 12 <= current_hour <= 23
+        elif day_of_week == 2:  # Martes
+            return 9 <= current_hour <= 23
+        elif day_of_week == 3:  # Miércoles
+            # hasta 24:00 (00:00 del día siguiente)
+            return 9 <= current_hour <= 23 or current_hour == 0
+        elif day_of_week == 4:  # Jueves
+            # hasta 01:00 del día siguiente
+            return 9 <= current_hour <= 23 or current_hour == 0 or current_hour == 1
+        elif day_of_week == 5:  # Viernes
+            # hasta 02:00 del día siguiente
+            return 8 <= current_hour <= 23 or current_hour == 0 or current_hour == 1 or current_hour == 2
+        elif day_of_week == 6:  # Sábado
+            # hasta 02:00 del día siguiente
+            return 8 <= current_hour <= 23 or current_hour == 0 or current_hour == 1 or current_hour == 2
+        elif day_of_week == 7:  # Domingo
+            return 8 <= current_hour <= 22
+
+        return False
+
     def handle(self, *args, **options):
 
         guayaquil_time = self.get_guayaquil_time()
         current_date = guayaquil_time.date()
         current_time = guayaquil_time.time()
 
-        current_hour = current_time.hour
-        if not (current_hour >= 7 or current_hour < 3):
+        # Validar horarios de operación por día de la semana
+        if not self.is_in_operating_hours(guayaquil_time):
+            day_names = {
+                1: 'Lunes', 2: 'Martes', 3: 'Miércoles', 4: 'Jueves',
+                5: 'Viernes', 6: 'Sábado', 7: 'Domingo'
+            }
+            day_schedules = {
+                1: '12:00-23:00',
+                2: '09:00-23:00',
+                3: '09:00-24:00',
+                4: '09:00-01:00',
+                5: '08:00-02:00',
+                6: '08:00-02:00',
+                7: '08:00-22:00'
+            }
+
+            day_of_week = guayaquil_time.isoweekday()
             self.stdout.write(
                 self.style.WARNING(
-                    f'Comando ejecutado fuera del rango permitido (7 AM - 3 AM). '
+                    f'Comando ejecutado fuera del horario de operación. '
+                    f'Día: {day_names[day_of_week]} ({day_schedules[day_of_week]}). '
                     f'Hora actual: {current_time.strftime("%H:%M")}. No se procesarán datos.'
                 )
             )
