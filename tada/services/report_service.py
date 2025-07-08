@@ -269,12 +269,15 @@ class ReportService:
 
     def _calculate_daily_variation(self, hourly_data, start_week, end_week):
         """
-        Calcula la variación total del día completo (última hora común registrada) 
-        comparando la semana actual vs la semana anterior.
+        Calcula la variación total del día completo comparando la semana actual vs la semana anterior.
+
+        Toma el último registro del día para cada semana independientemente:
+        - Semana actual: último registro disponible (ej: 10:00 con 2)
+        - Semana anterior: último registro disponible (ej: 23:00 con 394)
 
         Cada registro de hora es un total acumulado, no un incremento.
-        Considera que algunos días pueden tener jornadas hasta las 3 AM y otros terminar más temprano.
-        Busca la última hora común que tenga datos en ambas semanas para hacer una comparación justa.
+        Considera que el día termina a las 3 AM como máximo, después de eso ya es otro día.
+        Las horas se priorizan: 3 AM > 2 AM > 1 AM > 0 AM > 23 PM > 22 PM > ... > 7 AM.
 
         Args:
             hourly_data (list): Datos por hora procesados
@@ -303,13 +306,13 @@ class ReportService:
         current_week_str = str(current_week)
         previous_week_str = str(previous_week)
 
-        # Encontrar la última hora común que tenga datos en ambas semanas
-        # Recorrer desde la última hora hacia atrás
+        # Encontrar el último registro del día para cada semana
+        # Considerando que el máximo por día son las 3 AM
         comparison_hour = None
         current_week_total = 0
         previous_week_total = 0
 
-        # Ordenar las horas de mayor a menor para encontrar la última hora común
+        # Ordenar las horas de mayor a menor para encontrar la última hora del día
         hours_with_data = []
         for hour_data in hourly_data:
             if (current_week_str in hour_data['semanas'] and hour_data['semanas'][current_week_str] > 0) or \
@@ -318,63 +321,52 @@ class ReportService:
                 hours_with_data.append((hour_int, hour_data))
 
         # Ordenar por hora (considerando el cruce de medianoche)
+        # Las horas de 0 a 3 AM son las más tardías del día
         def sort_hour_key(item):
             hour = item[0]
-            # Si el rango cruza medianoche, ajustar el orden
-            if hour >= 7:  # Asumiendo que las jornadas empiezan a las 7 AM
-                return hour
-            else:
+            # Prioridad: 3 AM > 2 AM > 1 AM > 0 AM > 23 PM > 22 PM > ... > 7 AM
+            if 0 <= hour <= 3:  # Horas de madrugada (más tardías)
                 return hour + 24
+            else:  # Horas normales del día
+                return hour
 
         hours_with_data.sort(key=sort_hour_key, reverse=True)
 
-        # Buscar la última hora común con datos en ambas semanas
+        # Buscar el último registro del día para cada semana por separado
+        # Buscar el último registro de la semana actual (último del día)
+        current_week_comparison_hour = None
         for hour_int, hour_data in hours_with_data:
             current_count = hour_data['semanas'].get(current_week_str, 0)
-            previous_count = hour_data['semanas'].get(previous_week_str, 0)
-
-            # Si ambas semanas tienen datos para esta hora, usar esta como referencia
-            if current_count > 0 and previous_count > 0:
-                comparison_hour = hour_data['hora']
+            if current_count > 0:
                 current_week_total = current_count
-                previous_week_total = previous_count
+                current_week_comparison_hour = hour_data['hora']
                 break
 
-        # Si no encontramos una hora común, usar la última hora disponible de cada semana
-        if comparison_hour is None:
-            # Buscar la última hora de la semana actual
-            for hour_int, hour_data in hours_with_data:
-                current_count = hour_data['semanas'].get(current_week_str, 0)
-                if current_count > 0:
-                    current_week_total = current_count
-                    break
+        # Buscar el último registro de la semana anterior (último del día)
+        previous_week_comparison_hour = None
+        for hour_int, hour_data in hours_with_data:
+            previous_count = hour_data['semanas'].get(previous_week_str, 0)
+            if previous_count > 0:
+                previous_week_total = previous_count
+                previous_week_comparison_hour = hour_data['hora']
+                break
 
-            # Buscar la última hora de la semana anterior
-            for hour_int, hour_data in hours_with_data:
-                previous_count = hour_data['semanas'].get(previous_week_str, 0)
-                if previous_count > 0:
-                    previous_week_total = previous_count
-                    break
+        # Usar la hora de la semana actual como referencia para comparación
+        # (o la de la semana anterior si no hay datos en la actual)
+        comparison_hour = current_week_comparison_hour or previous_week_comparison_hour
 
-        # Calcular totales para todas las semanas (usando el mismo criterio)
+        # Calcular totales para todas las semanas (usando el último registro de cada semana)
         weekly_totals = {}
         for week in weeks:
             week_str = str(week)
             week_total = 0
 
-            # Si tenemos una hora de comparación, usar esa
-            if comparison_hour:
-                for hour_data in hourly_data:
-                    if hour_data['hora'] == comparison_hour:
-                        week_total = hour_data['semanas'].get(week_str, 0)
-                        break
-            else:
-                # Si no, usar la última hora disponible para cada semana
-                for hour_int, hour_data in hours_with_data:
-                    count = hour_data['semanas'].get(week_str, 0)
-                    if count > 0:
-                        week_total = count
-                        break
+            # Buscar el último registro del día que tenga datos para esta semana específica
+            for hour_int, hour_data in hours_with_data:
+                count = hour_data['semanas'].get(week_str, 0)
+                if count > 0:
+                    week_total = count
+                    break
 
             weekly_totals[week_str] = week_total
 
@@ -397,7 +389,9 @@ class ReportService:
             'variation_percentage': daily_variation_percentage,
             'current_week_total': current_week_total,
             'previous_week_total': previous_week_total,
-            'comparison_hour': comparison_hour
+            'comparison_hour': comparison_hour,
+            'current_week_comparison_hour': current_week_comparison_hour,
+            'previous_week_comparison_hour': previous_week_comparison_hour
         }
 
     def send_report_by_email(self, dia_seleccionado, start_week=None, end_week=None, year=None, start_hour=7, end_hour=3):
