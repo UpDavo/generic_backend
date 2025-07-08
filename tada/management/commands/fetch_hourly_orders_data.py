@@ -17,27 +17,28 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
 
-        braze_service = BrazeService()
-        report_service = ReportService()
+        guayaquil_time = self.get_guayaquil_time()
+        current_date = guayaquil_time.date()
+        current_time = guayaquil_time.time()
 
-        event = TrafficEvent.objects.get(id=2)
+        current_hour = current_time.hour
+        if not (current_hour >= 7 or current_hour < 3):
+            self.stdout.write(
+                self.style.WARNING(
+                    f'Comando ejecutado fuera del rango permitido (7 AM - 3 AM). '
+                    f'Hora actual: {current_time.strftime("%H:%M")}. No se procesarán datos.'
+                )
+            )
+            return
 
         try:
             # Obtener la fecha y hora actual en Guayaquil
-            guayaquil_time = self.get_guayaquil_time()
-            current_date = guayaquil_time.date()
-            current_time = guayaquil_time.time()
+            braze_service = BrazeService()
+            report_service = ReportService()
+
+            event = TrafficEvent.objects.get(id=2)
 
             # Validar que esté en el rango horario permitido (7 AM - 3 AM del día siguiente)
-            current_hour = current_time.hour
-            if not (current_hour >= 7 or current_hour < 3):
-                self.stdout.write(
-                    self.style.WARNING(
-                        f'Comando ejecutado fuera del rango permitido (7 AM - 3 AM). '
-                        f'Hora actual: {current_time.strftime("%H:%M")}. No se procesarán datos.'
-                    )
-                )
-                return
 
             self.stdout.write(
                 self.style.SUCCESS(
@@ -97,12 +98,6 @@ class Command(BaseCommand):
                 self.style.SUCCESS(
                     f'Logs creados exitosamente para el evento {event.id}'
                 )
-            )
-
-        except TrafficEvent.DoesNotExist:
-            self.stdout.write(
-                self.style.ERROR(
-                    'Error: No se encontró el evento de tráfico con ID 2')
             )
         except Exception as e:
             self.stdout.write(
