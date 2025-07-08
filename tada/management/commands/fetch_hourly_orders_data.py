@@ -28,6 +28,17 @@ class Command(BaseCommand):
             current_date = guayaquil_time.date()
             current_time = guayaquil_time.time()
 
+            # Validar que esté en el rango horario permitido (7 AM - 3 AM del día siguiente)
+            current_hour = current_time.hour
+            if not (current_hour >= 7 or current_hour < 3):
+                self.stdout.write(
+                    self.style.WARNING(
+                        f'Comando ejecutado fuera del rango permitido (7 AM - 3 AM). '
+                        f'Hora actual: {current_time.strftime("%H:%M")}. No se procesarán datos.'
+                    )
+                )
+                return
+
             self.stdout.write(
                 self.style.SUCCESS(
                     f'Procesando datos para {current_date} a las {current_time} (Guayaquil)'
