@@ -8,3 +8,4 @@ from .logs_stats_api import *
 from .traffic_api import *
 from .execution_api import *
 from .price_history_api import *
+from .report_api import *

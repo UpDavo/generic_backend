@@ -400,10 +400,17 @@ class ReportService:
             'comparison_hour': comparison_hour
         }
 
-    def send_report_by_email(self, dia_seleccionado):
+    def send_report_by_email(self, dia_seleccionado, start_week=None, end_week=None, year=None, start_hour=7, end_hour=3):
         try:
-            # Generar el reporte
-            report_data = self.get_datetime_variation(dia=dia_seleccionado)
+            # Generar el reporte con los parámetros recibidos
+            report_data = self.get_datetime_variation(
+                dia=dia_seleccionado,
+                start_week=start_week,
+                end_week=end_week,
+                year=year,
+                start_hour=start_hour,
+                end_hour=end_hour
+            )
 
             # Extraer datos del nuevo formato de respuesta
             result = report_data['hourly_data']

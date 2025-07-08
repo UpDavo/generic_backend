@@ -104,4 +104,10 @@ urlpatterns = [
     path('daily-meta/bulk-create/', DailyMetaBulkCreateView.as_view(),
          name='daily-meta-bulk-create'),
 
+    # Reports API
+    path('reports/datetime-variation/', DatetimeVariationReportView.as_view(),
+         name='datetime-variation-report'),
+    path('reports/send-email/', ReportEmailView.as_view(),
+         name='report-send-email'),
+
 ]
