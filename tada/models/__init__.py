@@ -7,3 +7,4 @@ from .app_price import AppPrice
 from .trafficEvent import TrafficEvent
 from .trafficLog import TrafficLog
 from .executionLog import ExecutionLog
+from .dailyMeta import DailyMeta

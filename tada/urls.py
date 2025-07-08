@@ -1,9 +1,5 @@
 from django.urls import path
 from tada.views import *
-from tada.views.logs_stats_api import NotificationLogsStatsView, CanvasLogsStatsView, TrafficLogsStatsView, ExecutionLogsStatsView, CombinedLogsStatsView
-from tada.views.price_history_api import PriceHistoryByAppView, AllAppsLatestPricesView, PriceComparisonView
-from tada.views.traffic_api import TrafficEventListCreateView, TrafficEventRetrieveUpdateDestroyView, TrafficLogListView
-from tada.views.execution_api import ExecutionLogListCreateView, ExecutionLogRetrieveUpdateDestroyView, ExecutionLogListView
 
 urlpatterns = [
     # Push
@@ -99,4 +95,13 @@ urlpatterns = [
          ExecutionLogRetrieveUpdateDestroyView.as_view(), name='execution-log-detail'),
     path('execution-logs/list/', ExecutionLogListView.as_view(),
          name='execution-log-list'),
+
+    # Daily Meta (CRUD completo)
+    path('daily-meta/', DailyMetaListCreateView.as_view(),
+         name='daily-meta-list-create'),
+    path('daily-meta/<int:pk>/',
+         DailyMetaRetrieveUpdateDestroyView.as_view(), name='daily-meta-detail'),
+    path('daily-meta/bulk-create/', DailyMetaBulkCreateView.as_view(),
+         name='daily-meta-bulk-create'),
+
 ]

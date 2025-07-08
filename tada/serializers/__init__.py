@@ -7,3 +7,9 @@ from .app_price_serializer import AppPriceSerializer, AppPriceWithPriceSerialize
 from .traffic_event_serializer import TrafficEventSerializer
 from .traffic_log_serializer import TrafficLogSerializer
 from .execution_log_serializer import ExecutionLogSerializer
+from .daily_meta_serializer import (
+    DailyMetaSerializer,
+    DailyMetaCreateSerializer,
+    DailyMetaUpdateSerializer,
+    DailyMetaListSerializer
+)
