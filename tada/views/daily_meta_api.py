@@ -190,11 +190,15 @@ class DailyMetaBulkCreateFromExcelView(APIView):
 
     def post(self, request):
         """
-        Crear múltiples metas desde un archivo Excel.
+        Crear o actualizar múltiples metas desde un archivo Excel.
 
         El archivo Excel debe tener las columnas:
         - date: Fecha en formato YYYY-MM-DD
         - goal: Meta numérica para el día
+
+        Comportamiento:
+        - Si la fecha no existe: crea una nueva meta
+        - Si la fecha ya existe: actualiza la meta existente
         """
         if 'file' not in request.FILES:
             return Response(
@@ -258,33 +262,68 @@ class DailyMetaBulkCreateFromExcelView(APIView):
                             f"Fila {index+2}: Meta debe ser un número válido")
                         continue
 
-                    # Crear el objeto meta
+                    # Crear o actualizar el objeto meta
                     meta_data = {
                         'date': date_str,
                         'target_count': target_count
                     }
 
-                    serializer = DailyMetaCreateSerializer(data=meta_data)
-                    if serializer.is_valid():
-                        try:
-                            meta = serializer.save()
-                            created_metas.append({
-                                'date': meta.date,
-                                'target_count': meta.target_count,
-                                'id': meta.id
-                            })
-                        except Exception as e:
+                    # Verificar si ya existe una meta para esta fecha
+                    existing_meta = DailyMeta.objects.filter(
+                        date=date_str).first()
+
+                    if existing_meta:
+                        # Actualizar meta existente
+                        serializer = DailyMetaUpdateSerializer(
+                            existing_meta, data=meta_data, partial=True)
+                        if serializer.is_valid():
+                            try:
+                                meta = serializer.save()
+                                created_metas.append({
+                                    'date': meta.date,
+                                    'target_count': meta.target_count,
+                                    'id': meta.id,
+                                    'action': 'updated'
+                                })
+                            except Exception as e:
+                                errors.append(
+                                    f"Fila {index+2}: Error al actualizar - {str(e)}")
+                        else:
                             errors.append(
-                                f"Fila {index+2}: Error al guardar - {str(e)}")
+                                f"Fila {index+2}: Error de validación al actualizar - {serializer.errors}")
                     else:
-                        errors.append(f"Fila {index+2}: {serializer.errors}")
+                        # Crear nueva meta
+                        serializer = DailyMetaCreateSerializer(data=meta_data)
+                        if serializer.is_valid():
+                            try:
+                                meta = serializer.save()
+                                created_metas.append({
+                                    'date': meta.date,
+                                    'target_count': meta.target_count,
+                                    'id': meta.id,
+                                    'action': 'created'
+                                })
+                            except Exception as e:
+                                errors.append(
+                                    f"Fila {index+2}: Error al crear - {str(e)}")
+                        else:
+                            errors.append(
+                                f"Fila {index+2}: Error de validación al crear - {serializer.errors}")
 
                 except Exception as e:
                     errors.append(
                         f"Fila {index+2}: Error inesperado - {str(e)}")
 
+            # Contar las acciones realizadas
+            created_count = len(
+                [m for m in created_metas if m.get('action') == 'created'])
+            updated_count = len(
+                [m for m in created_metas if m.get('action') == 'updated'])
+
             response_data = {
-                'created': len(created_metas),
+                'total_processed': len(created_metas),
+                'created': created_count,
+                'updated': updated_count,
                 'total_rows': len(df),
                 'errors_count': len(errors),
                 'results': created_metas
@@ -293,7 +332,7 @@ class DailyMetaBulkCreateFromExcelView(APIView):
             if errors:
                 response_data['errors'] = errors
 
-            # Si se crearon algunas metas, devolver 201, sino 400
+            # Si se procesaron algunas metas, devolver 201, sino 400
             status_code = status.HTTP_201_CREATED if created_metas else status.HTTP_400_BAD_REQUEST
 
             return Response(response_data, status=status_code)
