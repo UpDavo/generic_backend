@@ -6,6 +6,8 @@ from django.utils.dateparse import parse_date
 from datetime import datetime, timedelta
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
+import pandas as pd
+from io import BytesIO
 
 from tada.models import DailyMeta
 from tada.serializers import (
@@ -178,3 +180,126 @@ class DailyMetaBulkCreateView(APIView):
             response_data,
             status=status.HTTP_201_CREATED if created_metas else status.HTTP_400_BAD_REQUEST
         )
+
+
+class DailyMetaBulkCreateFromExcelView(APIView):
+    """
+    Vista para crear múltiples metas diarias desde un archivo Excel.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        """
+        Crear múltiples metas desde un archivo Excel.
+
+        El archivo Excel debe tener las columnas:
+        - date: Fecha en formato YYYY-MM-DD
+        - goal: Meta numérica para el día
+        """
+        if 'file' not in request.FILES:
+            return Response(
+                {'error': 'Se requiere un archivo Excel en el campo "file"'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        excel_file = request.FILES['file']
+
+        # Validar que sea un archivo Excel
+        if not excel_file.name.endswith(('.xlsx', '.xls')):
+            return Response(
+                {'error': 'El archivo debe ser un Excel (.xlsx o .xls)'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            # Leer el archivo Excel
+            df = pd.read_excel(BytesIO(excel_file.read()))
+
+            # Validar que las columnas requeridas existan
+            required_columns = ['date', 'goal']
+            missing_columns = [
+                col for col in required_columns if col not in df.columns]
+
+            if missing_columns:
+                return Response(
+                    {'error': f'Columnas faltantes en el archivo: {", ".join(missing_columns)}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            created_metas = []
+            errors = []
+
+            # Procesar cada fila del Excel
+            for index, row in df.iterrows():
+                try:
+                    # Validar y convertir la fecha
+                    date_value = row['date']
+                    if pd.isna(date_value):
+                        # +2 por encabezado y índice 0
+                        errors.append(f"Fila {index+2}: Fecha vacía")
+                        continue
+
+                    # Si es un timestamp de pandas, convertir a fecha
+                    if isinstance(date_value, pd.Timestamp):
+                        date_str = date_value.strftime('%Y-%m-%d')
+                    else:
+                        date_str = str(date_value)
+
+                    # Validar y convertir la meta
+                    goal_value = row['goal']
+                    if pd.isna(goal_value):
+                        errors.append(f"Fila {index+2}: Meta vacía")
+                        continue
+
+                    try:
+                        target_count = int(float(goal_value))
+                    except (ValueError, TypeError):
+                        errors.append(
+                            f"Fila {index+2}: Meta debe ser un número válido")
+                        continue
+
+                    # Crear el objeto meta
+                    meta_data = {
+                        'date': date_str,
+                        'target_count': target_count
+                    }
+
+                    serializer = DailyMetaCreateSerializer(data=meta_data)
+                    if serializer.is_valid():
+                        try:
+                            meta = serializer.save()
+                            created_metas.append({
+                                'date': meta.date,
+                                'target_count': meta.target_count,
+                                'id': meta.id
+                            })
+                        except Exception as e:
+                            errors.append(
+                                f"Fila {index+2}: Error al guardar - {str(e)}")
+                    else:
+                        errors.append(f"Fila {index+2}: {serializer.errors}")
+
+                except Exception as e:
+                    errors.append(
+                        f"Fila {index+2}: Error inesperado - {str(e)}")
+
+            response_data = {
+                'created': len(created_metas),
+                'total_rows': len(df),
+                'errors_count': len(errors),
+                'results': created_metas
+            }
+
+            if errors:
+                response_data['errors'] = errors
+
+            # Si se crearon algunas metas, devolver 201, sino 400
+            status_code = status.HTTP_201_CREATED if created_metas else status.HTTP_400_BAD_REQUEST
+
+            return Response(response_data, status=status_code)
+
+        except Exception as e:
+            return Response(
+                {'error': f'Error al procesar el archivo Excel: {str(e)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )

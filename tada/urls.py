@@ -103,6 +103,8 @@ urlpatterns = [
          DailyMetaRetrieveUpdateDestroyView.as_view(), name='daily-meta-detail'),
     path('daily-meta/bulk-create/', DailyMetaBulkCreateView.as_view(),
          name='daily-meta-bulk-create'),
+    path('daily-meta/bulk-create-excel/', DailyMetaBulkCreateFromExcelView.as_view(),
+         name='daily-meta-bulk-create-excel'),
 
     # Reports API
     path('reports/datetime-variation/', DatetimeVariationReportView.as_view(),

@@ -96,6 +96,27 @@ class DatetimeVariationReportView(APIView):
                 end_hour=end_hour
             )
 
+            try:
+                event = TrafficEvent.objects.get(id=2)
+                current_date = datetime.now().date()
+                current_time = datetime.now().time()
+
+                ExecutionLog.objects.create(
+                    event=event,
+                    execution_type='manual',
+                    command='Obtencion manual de reporte',
+                    date=current_date,
+                    time=current_time,
+                    app=APPS['EXECUTION']
+                )
+            except TrafficEvent.DoesNotExist:
+                # Si no existe el evento con ID 2, crear log de error pero continuar
+                print(
+                    "Warning: TrafficEvent con ID 2 no encontrado. No se registró en ExecutionLog.")
+            except Exception as log_error:
+                # Si hay error al crear el log, no fallar la operación principal
+                print(f"Error al crear ExecutionLog: {log_error}")
+
             # Preparar respuesta con metadatos adicionales
             response_data = {
                 'success': True,
