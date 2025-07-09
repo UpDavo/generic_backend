@@ -333,22 +333,44 @@ class ReportService:
         hours_with_data.sort(key=sort_hour_key, reverse=True)
 
         # Buscar el último registro del día para cada semana por separado
-        # Buscar el último registro de la semana actual (último del día)
+        # Para semana actual
         current_week_comparison_hour = None
+        current_week_total = 0
+        current_week_last_hour = None
+
         for hour_int, hour_data in hours_with_data:
             current_count = hour_data['semanas'].get(current_week_str, 0)
             if current_count > 0:
-                current_week_total = current_count
+                current_week_last_hour = hour_int
                 current_week_comparison_hour = hour_data['hora']
+
+                # Si la última hora es de madrugada (00:00 a 03:00), calcular total acumulado
+                if 0 <= hour_int <= 3:
+                    current_week_total = self._calculate_total_with_dawn_hours(
+                        hourly_data, current_week_str, hour_int
+                    )
+                else:
+                    current_week_total = current_count
                 break
 
-        # Buscar el último registro de la semana anterior (último del día)
+        # Para semana anterior
         previous_week_comparison_hour = None
+        previous_week_total = 0
+        previous_week_last_hour = None
+
         for hour_int, hour_data in hours_with_data:
             previous_count = hour_data['semanas'].get(previous_week_str, 0)
             if previous_count > 0:
-                previous_week_total = previous_count
+                previous_week_last_hour = hour_int
                 previous_week_comparison_hour = hour_data['hora']
+
+                # Si la última hora es de madrugada (00:00 a 03:00), calcular total acumulado
+                if 0 <= hour_int <= 3:
+                    previous_week_total = self._calculate_total_with_dawn_hours(
+                        hourly_data, previous_week_str, hour_int
+                    )
+                else:
+                    previous_week_total = previous_count
                 break
 
         # Usar la hora de la semana actual como referencia para comparación
@@ -360,12 +382,21 @@ class ReportService:
         for week in weeks:
             week_str = str(week)
             week_total = 0
+            week_last_hour = None
 
             # Buscar el último registro del día que tenga datos para esta semana específica
             for hour_int, hour_data in hours_with_data:
                 count = hour_data['semanas'].get(week_str, 0)
                 if count > 0:
-                    week_total = count
+                    week_last_hour = hour_int
+
+                    # Si la última hora es de madrugada (00:00 a 03:00), calcular total acumulado
+                    if 0 <= hour_int <= 3:
+                        week_total = self._calculate_total_with_dawn_hours(
+                            hourly_data, week_str, hour_int
+                        )
+                    else:
+                        week_total = count
                     break
 
             weekly_totals[week_str] = week_total
@@ -558,3 +589,66 @@ class ReportService:
             'last_hour_with_data': last_hour_with_data,
             'meta_id': daily_meta.id
         }
+
+    def _calculate_total_with_dawn_hours(self, hourly_data, week_str, last_dawn_hour):
+        """
+        Calcula el total del día cuando la última hora registrada es de madrugada (00:00 a 03:00).
+
+        La lógica es simple: 
+        1. Encontrar el valor a las 00:00 (si existe)
+        2. Encontrar el último valor de madrugada (01:00, 02:00 o 03:00)
+        3. Sumar: valor_00:00 + último_valor_madrugada
+
+        Ejemplo: 00:00 = 722, 01:00 = 18 → Total = 722 + 18 = 740
+
+        Args:
+            hourly_data (list): Datos por hora procesados
+            week_str (str): Semana como string
+            last_dawn_hour (int): Última hora de madrugada registrada (0-3)
+
+        Returns:
+            int: Total acumulado del día
+        """
+        value_at_midnight = 0  # Valor a las 00:00
+        # Último valor de madrugada (01:00, 02:00, 03:00)
+        last_dawn_value = 0
+
+        # Buscar el valor a las 00:00
+        for hour_data in hourly_data:
+            hour_int = int(hour_data['hora'].split(':')[0])
+            if hour_int == 0:  # 00:00
+                count = hour_data['semanas'].get(week_str, 0)
+                if count > 0:
+                    value_at_midnight = count
+                break
+
+        # Buscar el último valor de madrugada (01:00, 02:00, 03:00)
+        # Solo considerar horas de 1 a 3 AM
+        if last_dawn_hour > 0:  # Solo si la última hora es mayor a 00:00
+            dawn_values = {}
+            for hour_data in hourly_data:
+                hour_int = int(hour_data['hora'].split(':')[0])
+                if 1 <= hour_int <= last_dawn_hour:  # 01:00 a 03:00
+                    count = hour_data['semanas'].get(week_str, 0)
+                    if count > 0:
+                        dawn_values[hour_int] = count
+
+            # Obtener el último valor de madrugada (hora más tardía)
+            if dawn_values:
+                max_dawn_hour_key = max(dawn_values.keys())
+                last_dawn_value = dawn_values[max_dawn_hour_key]
+
+        # Calcular total: valor de medianoche + último valor de madrugada
+        total = value_at_midnight + last_dawn_value
+
+        # Si no hay valor a las 00:00 pero sí hay valores de madrugada,
+        # usar solo el último valor de madrugada
+        if value_at_midnight == 0 and last_dawn_value > 0:
+            total = last_dawn_value
+
+        # Si no hay valores de madrugada pero sí a las 00:00,
+        # usar solo el valor de medianoche
+        if last_dawn_value == 0 and value_at_midnight > 0:
+            total = value_at_midnight
+
+        return total
