@@ -710,7 +710,7 @@ class ExecutionLogsStatsView(APIView):
             automatic_cost = automatic_unit_price * automatic_logs
 
             # Precio manual = 60% del precio base
-            manual_unit_price = base_price * Decimal('0.45')
+            manual_unit_price = base_price * Decimal('0.35')
             manual_cost = manual_unit_price * manual_logs
 
             total_cost = manual_cost + automatic_cost
@@ -744,6 +744,6 @@ class ExecutionLogsStatsView(APIView):
                 'automatic_cost': str(automatic_cost),
                 'total_cost': str(total_cost),
                 'price_month': price_month,
-                'manual_markup': '60%'  # Indicador del markup aplicado
+                'manual_markup': '35%'  # Indicador del markup aplicado
             }
         }, status=status.HTTP_200_OK)

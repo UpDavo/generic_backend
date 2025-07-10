@@ -28,7 +28,7 @@ class Command(BaseCommand):
                 )
             )
 
-            report_service.send_report_by_email(dia_seleccionado=2)
+            report_service.send_report_by_email(dia_seleccionado=4)
 
         except TrafficEvent.DoesNotExist:
             self.stdout.write(

@@ -3,24 +3,50 @@ from tada.models.trafficLog import TrafficLog
 from tada.models.dailyMeta import DailyMeta
 from core.utils.emailThread import EmailThread
 from core.models import EmailNotification, EmailNotificationType
+from tada.utils.constants import START_WINDOW, END_WINDOW, DAY_NAMES, OPERATING_HOURS
 
 
 class ReportService:
+    # Configuración de ventana de tiempo para registros
+    # Registros entre START_WINDOW de una hora hasta END_WINDOW de la siguiente hora
+    # se consideran datos de la hora siguiente
+    START_WINDOW_MINUTE = START_WINDOW  # Importado desde constants
+    END_WINDOW_MINUTE = END_WINDOW      # Importado desde constants
 
-    def get_datetime_variation(self, dia, start_week=None, end_week=None, year=None, start_hour=7, end_hour=3):
+    def get_datetime_variation(self, dia, start_week=None, end_week=None, year=None, start_hour=None, end_hour=None):
         """
         Obtiene la variación de tráfico por hora durante un rango de semanas para un día específico.
 
+        Utiliza una ventana de tiempo configurable (START_WINDOW_MINUTE a END_WINDOW_MINUTE) 
+        para determinar a qué hora pertenecen los registros.
+
+        Los horarios de operación se obtienen automáticamente de OPERATING_HOURS según el día,
+        considerando si el horario se extiende al día siguiente.
+
         Args:
             dia (int): Día de la semana (1=Lunes, 2=Martes, 3=Miércoles, 4=Jueves, 5=Viernes, 6=Sábado, 7=Domingo)
-            start_week (int): Número de semana de inicio (opcional, default: 7 semanas antes de la actual)
+            start_week (int): Número de semana de inicio (opcional, default: 4 semanas antes de la actual)
             end_week (int): Número de semana de fin (opcional, default: semana actual)
             year (int): Año para el cual obtener los datos (opcional, default: año actual)
-            start_hour (int): Hora de inicio del rango (opcional, default: 7 para 07:00 am)
-            end_hour (int): Hora de fin del rango (opcional, default: 3 para 03:00 am)
+            start_hour (int): Hora de inicio del rango (opcional, se obtiene de OPERATING_HOURS si no se especifica)
+            end_hour (int): Hora de fin del rango (opcional, se obtiene de OPERATING_HOURS si no se especifica)
 
         Returns:
-            list: Lista de diccionarios con datos de tráfico por hora
+            dict: Diccionario con datos de tráfico por hora, variación diaria y comparación con meta
+
+        Note:
+            La ventana de tiempo se configura con START_WINDOW_MINUTE y END_WINDOW_MINUTE.
+            Por defecto: registros entre minuto 57 de una hora hasta minuto 3 de la siguiente
+            se consideran datos de la hora siguiente (ej: 8:57-9:03 → datos de las 9:00)
+
+            Los horarios se obtienen de OPERATING_HOURS:
+            - Lunes: 12:00-23:00
+            - Martes: 09:00-23:00  
+            - Miércoles: 09:00-24:00
+            - Jueves: 09:00-01:00 (del día siguiente)
+            - Viernes: 08:00-02:00 (del día siguiente)
+            - Sábado: 08:00-02:00 (del día siguiente)
+            - Domingo: 08:00-22:00
         """
         BASE_WEEKS = 4
         # Validar el parámetro día
@@ -40,8 +66,20 @@ class ReportService:
             end_week = current_week
         if start_week is None:
             # 7 semanas anteriores + la actual = 8 semanas total
-
             start_week = max(1, end_week - BASE_WEEKS)
+
+        # Obtener horarios de operación para el día especificado
+        if start_hour is None or end_hour is None:
+            day_schedule = OPERATING_HOURS.get(dia)
+            if day_schedule:
+                if start_hour is None:
+                    start_hour = day_schedule['start_hour']
+                if end_hour is None:
+                    end_hour = day_schedule['end_hour']
+            else:
+                # Valores por defecto si no se encuentra el día
+                start_hour = start_hour or 7
+                end_hour = end_hour or 3
         # Calcular fechas de inicio y fin basadas en las semanas ISO
 
         def get_week_start_end(year, week):
@@ -91,10 +129,27 @@ class ReportService:
         # Diccionario para almacenar los datos por hora y semana
         hourly_data = {}
 
+        # Procesar registros aplicando ventana de tiempo:
+        # Registros entre START_WINDOW_MINUTE de una hora hasta END_WINDOW_MINUTE de la siguiente hora
+        # se consideran datos de la hora siguiente (ej: 57-3 → 8:57-9:03 = datos de las 9:00)
         for log in traffic_logs:
-            # Obtener la hora (sin minutos)
-            hour = log.time.hour
-            hour_key = f"{hour:02d}:00"
+            # Aplicar ventana de tiempo: registros entre minuto START_WINDOW_MINUTE de una hora hasta minuto END_WINDOW_MINUTE de la siguiente
+            # se consideran de la hora siguiente
+            actual_hour = log.time.hour
+            actual_minute = log.time.minute
+
+            # Determinar a qué hora pertenece este registro según la ventana
+            if actual_minute >= self.START_WINDOW_MINUTE:
+                # Si está en o después del minuto de inicio de ventana, pertenece a la siguiente hora
+                target_hour = (actual_hour + 1) % 24
+            elif actual_minute <= self.END_WINDOW_MINUTE:
+                # Si está en o antes del minuto de fin de ventana, pertenece a la hora actual
+                target_hour = actual_hour
+            else:
+                # Si está fuera de la ventana, saltar este registro
+                continue
+
+            hour_key = f"{target_hour:02d}:00"
 
             # Obtener el día de la semana del registro (1=Lunes, 7=Domingo)
             log_weekday = log.date.isoweekday()
@@ -104,20 +159,20 @@ class ReportService:
 
             if start_hour <= end_hour:
                 # Rango normal: solo registros del día especificado
-                if log_weekday == dia and hour in valid_hours:
+                if log_weekday == dia and target_hour in valid_hours:
                     is_valid_record = True
             else:
                 # Rango que cruza medianoche
                 if log_weekday == dia:
                     # Registros del día principal (desde start_hour hasta 23)
-                    if hour >= start_hour:
+                    if target_hour >= start_hour:
                         is_valid_record = True
                 else:
                     # Calcular el día siguiente
                     next_day = dia + 1 if dia < 7 else 1
                     if log_weekday == next_day:
                         # Registros del día siguiente (desde 0 hasta end_hour)
-                        if hour <= end_hour:
+                        if target_hour <= end_hour:
                             is_valid_record = True
 
             if not is_valid_record:
@@ -154,25 +209,32 @@ class ReportService:
 
             for week_num in range(start_week, end_week + 1):
                 if week_num in weeks_data:
-                    # Obtener el registro más tardío de la hora (con ventana de 2 minutos)
+                    # Obtener el registro más tardío de la hora usando la nueva ventana de tiempo
                     hour_int = int(hour_key.split(':')[0])
 
-                    # Filtrar registros dentro de la ventana de tiempo
-                    # Considerar registros desde 2 minutos antes de la hora hasta 59 minutos después
+                    # Filtrar registros dentro de la ventana de tiempo configurada
+                    # Los registros ya están filtrados por la ventana en el procesamiento anterior
                     valid_records = []
                     for record in weeks_data[week_num]:
+                        # Los registros ya están asignados a la hora correcta según la ventana
+                        # Solo verificar que correspondan a la hora que estamos procesando
                         record_hour = record['time'].hour
                         record_minute = record['time'].minute
 
-                        # Si es la hora exacta, tomar todos los registros de esa hora
-                        if record_hour == hour_int:
-                            valid_records.append(record)
-                        # Si es la hora anterior y los minutos son >= 58, considerar como de la siguiente hora
-                        elif record_hour == hour_int - 1 and record_minute >= 58:
+                        # Determinar a qué hora pertenece este registro según la ventana configurada
+                        if record_minute >= self.START_WINDOW_MINUTE:
+                            target_record_hour = (record_hour + 1) % 24
+                        elif record_minute <= self.END_WINDOW_MINUTE:
+                            target_record_hour = record_hour
+                        else:
+                            continue  # No debería llegar aquí ya que se filtró antes
+
+                        # Si coincide con la hora que estamos procesando, es válido
+                        if target_record_hour == hour_int:
                             valid_records.append(record)
 
                     if valid_records:
-                        # Obtener el registro más tardío
+                        # Obtener el registro más tardío dentro de la ventana
                         latest_record = max(
                             valid_records, key=lambda x: x['datetime'])
                         hour_result["semanas"][str(
@@ -223,7 +285,7 @@ class ReportService:
 
         # Calcular variación total del día (todas las horas) vs semana anterior
         daily_variation = self._calculate_daily_variation(
-            result, start_week, end_week)
+            result, start_week, end_week, dia, start_hour, end_hour)
 
         # Calcular comparación con meta diaria si es posible (optimizado)
         daily_meta_vs_real = None
@@ -253,7 +315,10 @@ class ReportService:
                         daily_meta_vs_real = self._get_daily_meta_vs_real_optimized(
                             date=target_date,
                             hourly_data=result,
-                            target_week=current_week
+                            target_week=current_week,
+                            dia=dia,
+                            start_hour=start_hour,
+                            end_hour=end_hour
                         )
                     except Exception as e:
                         # Si hay error, solo loguear pero no fallar
@@ -264,10 +329,118 @@ class ReportService:
         return {
             'hourly_data': result,
             'daily_variation': daily_variation,
-            'daily_meta_vs_real': daily_meta_vs_real
+            'daily_meta_vs_real': daily_meta_vs_real,
+            'current_time': self._get_current_time_summary(result, start_week, end_week, dia, start_hour, end_hour)
         }
 
-    def _calculate_daily_variation(self, hourly_data, start_week, end_week):
+    def _get_current_time_summary(self, hourly_data, start_week, end_week, dia, start_hour, end_hour):
+        """
+        Obtiene un resumen del estado actual comparando semana pasada vs actual.
+        Usa la misma hora (última hora con datos de semana actual) para ambas semanas.
+
+        Considera los horarios de operación dinámicos según el día especificado.
+
+        Args:
+            hourly_data (list): Datos por hora procesados
+            start_week (int): Semana de inicio
+            end_week (int): Semana de fin
+            dia (int): Día de la semana (1=Lunes, 7=Domingo)
+            start_hour (int): Hora de inicio del rango de operación
+            end_hour (int): Hora de fin del rango de operación
+
+        Returns:
+            dict: Resumen con datos de semana pasada, actual, última hora y variación
+        """
+        # Obtener todas las semanas disponibles
+        weeks = list(range(start_week, end_week + 1))
+
+        # Si no hay suficientes semanas, retornar valores por defecto
+        if len(weeks) < 2:
+            return {
+                'w_pasada': 0,
+                'w_actual': 0,
+                'ultima_hora_toma_datos_w_actual': None,
+                'fecha': datetime.now().date().strftime('%Y-%m-%d'),
+                'variacion': 0
+            }
+
+        # Obtener las dos últimas semanas
+        w_actual = weeks[-1]
+        w_pasada = weeks[-2]
+        w_actual_str = str(w_actual)
+        w_pasada_str = str(w_pasada)
+
+        # PASO 1: Encontrar la última hora con datos en la semana actual
+        # Considerando los horarios de operación del día especificado
+        w_actual_count = 0
+        ultima_hora_datos = None
+
+        # Crear lista de horas válidas según los horarios de operación
+        valid_operating_hours = []
+        if start_hour <= end_hour:
+            # Rango normal (ej: 12:00 a 23:00)
+            valid_operating_hours = list(range(start_hour, end_hour + 1))
+        else:
+            # Rango que cruza medianoche (ej: 09:00 a 01:00 del día siguiente)
+            valid_operating_hours = list(
+                range(start_hour, 24)) + list(range(0, end_hour + 1))
+
+        # Ordenar las horas de mayor a menor para encontrar la última hora del día
+        # Las horas de 0 a 3 AM son las más tardías del día cuando cruza medianoche
+        def sort_hour_key(hour):
+            if start_hour > end_hour:  # Si cruza medianoche
+                if 0 <= hour <= end_hour:  # Horas de madrugada (más tardías)
+                    return hour + 24
+                else:  # Horas normales del día
+                    return hour
+            else:
+                return hour
+
+        # Filtrar solo los datos que están dentro del horario de operación y ordenar
+        valid_hours_with_data = []
+        for hour_data in hourly_data:
+            hour_int = int(hour_data['hora'].split(':')[0])
+            if hour_int in valid_operating_hours:
+                valid_hours_with_data.append((hour_int, hour_data))
+
+        # Ordenar por hora de mayor a menor (considerando cruce de medianoche)
+        valid_hours_with_data.sort(
+            key=lambda x: sort_hour_key(x[0]), reverse=True)
+
+        # Buscar la última hora con datos en la semana actual
+        for hour_int, hour_data in valid_hours_with_data:
+            if w_actual_str in hour_data['semanas'] and hour_data['semanas'][w_actual_str] > 0:
+                w_actual_count = hour_data['semanas'][w_actual_str]
+                ultima_hora_datos = hour_data['hora']
+                break
+
+        # PASO 2: Usar esa MISMA hora para obtener datos de la semana pasada
+        w_pasada_count = 0
+
+        if ultima_hora_datos:
+            # Buscar específicamente esa hora en la semana pasada
+            for hour_data in hourly_data:
+                if hour_data['hora'] == ultima_hora_datos:
+                    w_pasada_count = hour_data['semanas'].get(w_pasada_str, 0)
+                    break
+
+        # Calcular variación porcentual
+        variacion = 0
+        if w_pasada_count > 0:
+            variacion = int(
+                ((w_actual_count - w_pasada_count) / w_pasada_count) * 100)
+        elif w_actual_count > 0:
+            variacion = 100  # Crecimiento del 100% cuando no había datos anteriores
+
+        return {
+            'w_pasada': w_pasada_count,
+            'w_actual': w_actual_count,
+            'ultima_hora_toma_datos_w_actual': ultima_hora_datos,
+            'fecha': datetime.now().date().strftime('%Y-%m-%d'),
+            'variacion': variacion
+        }
+
+    def _calculate_daily_variation(self, hourly_data, start_week, end_week, dia, start_hour, end_hour):
         """
         Calcula la variación total del día completo comparando la semana actual vs la semana anterior.
 
@@ -276,13 +449,15 @@ class ReportService:
         - Semana anterior: último registro disponible (ej: 23:00 con 394)
 
         Cada registro de hora es un total acumulado, no un incremento.
-        Considera que el día termina a las 3 AM como máximo, después de eso ya es otro día.
-        Las horas se priorizan: 3 AM > 2 AM > 1 AM > 0 AM > 23 PM > 22 PM > ... > 7 AM.
+        Usa los horarios de operación dinámicos según el día especificado.
 
         Args:
             hourly_data (list): Datos por hora procesados
             start_week (int): Semana de inicio
             end_week (int): Semana de fin
+            dia (int): Día de la semana (1=Lunes, 7=Domingo)
+            start_hour (int): Hora de inicio del rango de operación
+            end_hour (int): Hora de fin del rango de operación
 
         Returns:
             dict: Diccionario con variación diaria y totales por semana
@@ -307,27 +482,40 @@ class ReportService:
         previous_week_str = str(previous_week)
 
         # Encontrar el último registro del día para cada semana
-        # Considerando que el máximo por día son las 3 AM
+        # Usando los horarios de operación dinámicos
         comparison_hour = None
         current_week_total = 0
         previous_week_total = 0
 
-        # Ordenar las horas de mayor a menor para encontrar la última hora del día
+        # Crear lista de horas válidas según los horarios de operación
+        valid_operating_hours = []
+        if start_hour <= end_hour:
+            # Rango normal (ej: 12:00 a 23:00)
+            valid_operating_hours = list(range(start_hour, end_hour + 1))
+        else:
+            # Rango que cruza medianoche (ej: 09:00 a 01:00 del día siguiente)
+            valid_operating_hours = list(
+                range(start_hour, 24)) + list(range(0, end_hour + 1))
+
+        # Filtrar horas que están dentro del horario de operación y tienen datos
         hours_with_data = []
         for hour_data in hourly_data:
             if (current_week_str in hour_data['semanas'] and hour_data['semanas'][current_week_str] > 0) or \
                (previous_week_str in hour_data['semanas'] and hour_data['semanas'][previous_week_str] > 0):
                 hour_int = int(hour_data['hora'].split(':')[0])
-                hours_with_data.append((hour_int, hour_data))
+                # Solo incluir horas que están dentro del horario de operación
+                if hour_int in valid_operating_hours:
+                    hours_with_data.append((hour_int, hour_data))
 
         # Ordenar por hora (considerando el cruce de medianoche)
-        # Las horas de 0 a 3 AM son las más tardías del día
         def sort_hour_key(item):
             hour = item[0]
-            # Prioridad: 3 AM > 2 AM > 1 AM > 0 AM > 23 PM > 22 PM > ... > 7 AM
-            if 0 <= hour <= 3:  # Horas de madrugada (más tardías)
-                return hour + 24
-            else:  # Horas normales del día
+            if start_hour > end_hour:  # Si cruza medianoche
+                if 0 <= hour <= end_hour:  # Horas de madrugada (más tardías)
+                    return hour + 24
+                else:  # Horas normales del día
+                    return hour
+            else:
                 return hour
 
         hours_with_data.sort(key=sort_hour_key, reverse=True)
@@ -344,8 +532,8 @@ class ReportService:
                 current_week_last_hour = hour_int
                 current_week_comparison_hour = hour_data['hora']
 
-                # Si la última hora es de madrugada (00:00 a 03:00), calcular total acumulado
-                if 0 <= hour_int <= 3:
+                # Si la última hora es de madrugada y cruza medianoche, calcular total acumulado
+                if start_hour > end_hour and 0 <= hour_int <= end_hour:
                     current_week_total = self._calculate_total_with_dawn_hours(
                         hourly_data, current_week_str, hour_int
                     )
@@ -364,8 +552,8 @@ class ReportService:
                 previous_week_last_hour = hour_int
                 previous_week_comparison_hour = hour_data['hora']
 
-                # Si la última hora es de madrugada (00:00 a 03:00), calcular total acumulado
-                if 0 <= hour_int <= 3:
+                # Si la última hora es de madrugada y cruza medianoche, calcular total acumulado
+                if start_hour > end_hour and 0 <= hour_int <= end_hour:
                     previous_week_total = self._calculate_total_with_dawn_hours(
                         hourly_data, previous_week_str, hour_int
                     )
@@ -390,8 +578,8 @@ class ReportService:
                 if count > 0:
                     week_last_hour = hour_int
 
-                    # Si la última hora es de madrugada (00:00 a 03:00), calcular total acumulado
-                    if 0 <= hour_int <= 3:
+                    # Si la última hora es de madrugada y cruza medianoche, calcular total acumulado
+                    if start_hour > end_hour and 0 <= hour_int <= end_hour:
                         week_total = self._calculate_total_with_dawn_hours(
                             hourly_data, week_str, hour_int
                         )
@@ -441,13 +629,10 @@ class ReportService:
             result = report_data['hourly_data']
             daily_variation = report_data['daily_variation']
             daily_meta_vs_real = report_data['daily_meta_vs_real']
+            current_time = report_data['current_time']
 
-            # Mapear número de día a nombre (usar constante para evitar recrear el diccionario)
-            dias_nombres = {
-                1: "Lunes", 2: "Martes", 3: "Miércoles", 4: "Jueves",
-                5: "Viernes", 6: "Sábado", 7: "Domingo"
-            }
-            dia_nombre = dias_nombres.get(dia_seleccionado, "Desconocido")
+            # Usar constante para nombres de días
+            dia_nombre = DAY_NAMES.get(dia_seleccionado, "Desconocido")
 
             # Optimización: Calcular todos los valores en una sola iteración
             if not result:
@@ -496,7 +681,8 @@ class ReportService:
                     'dia_nombre': dia_nombre,
                     'total_ordenes_ultima_hora': total_ordenes_ultima_hora,
                     'daily_variation': daily_variation,
-                    'daily_meta_vs_real': daily_meta_vs_real
+                    'daily_meta_vs_real': daily_meta_vs_real,
+                    'current_time': current_time
                 }
 
                 # print(email_data)
@@ -517,15 +703,20 @@ class ReportService:
         except Exception as e:
             print(f"Error al enviar el reporte por email: {e}")
 
-    def _get_daily_meta_vs_real_optimized(self, date, hourly_data, target_week):
+    def _get_daily_meta_vs_real_optimized(self, date, hourly_data, target_week, dia, start_hour, end_hour):
         """
         Versión optimizada de get_daily_meta_vs_real que usa datos ya procesados.
         Evita consultas recursivas y duplicadas.
+
+        Usa la misma lógica de acumulación que daily_variation para horarios que cruzan medianoche.
 
         Args:
             date (datetime.date): Fecha para la cual obtener la comparación
             hourly_data (list): Datos por hora ya procesados
             target_week (int): Semana objetivo
+            dia (int): Día de la semana (1=Lunes, 7=Domingo)
+            start_hour (int): Hora de inicio del rango de operación
+            end_hour (int): Hora de fin del rango de operación
 
         Returns:
             dict: Diccionario con la comparación meta vs real
@@ -546,15 +737,56 @@ class ReportService:
                 'meta_id': None
             }
 
-        # Obtener el último registro del día (tráfico acumulado) usando datos ya procesados
+        # Obtener el último registro del día (tráfico acumulado) usando la misma lógica que daily_variation
         real_count = 0
         last_hour_with_data = None
         week_str = str(target_week)
 
-        for hour_data in reversed(hourly_data):
+        # Crear lista de horas válidas según los horarios de operación
+        valid_operating_hours = []
+        if start_hour <= end_hour:
+            # Rango normal (ej: 12:00 a 23:00)
+            valid_operating_hours = list(range(start_hour, end_hour + 1))
+        else:
+            # Rango que cruza medianoche (ej: 09:00 a 01:00 del día siguiente)
+            valid_operating_hours = list(
+                range(start_hour, 24)) + list(range(0, end_hour + 1))
+
+        # Filtrar horas que están dentro del horario de operación y tienen datos
+        hours_with_data = []
+        for hour_data in hourly_data:
             if week_str in hour_data['semanas'] and hour_data['semanas'][week_str] > 0:
-                real_count = hour_data['semanas'][week_str]
+                hour_int = int(hour_data['hora'].split(':')[0])
+                # Solo incluir horas que están dentro del horario de operación
+                if hour_int in valid_operating_hours:
+                    hours_with_data.append((hour_int, hour_data))
+
+        # Ordenar por hora (considerando el cruce de medianoche)
+        def sort_hour_key(item):
+            hour = item[0]
+            if start_hour > end_hour:  # Si cruza medianoche
+                if 0 <= hour <= end_hour:  # Horas de madrugada (más tardías)
+                    return hour + 24
+                else:  # Horas normales del día
+                    return hour
+            else:
+                return hour
+
+        hours_with_data.sort(key=sort_hour_key, reverse=True)
+
+        # Buscar el último registro del día para la meta
+        for hour_int, hour_data in hours_with_data:
+            count = hour_data['semanas'].get(week_str, 0)
+            if count > 0:
                 last_hour_with_data = hour_data['hora']
+
+                # Si la última hora es de madrugada y cruza medianoche, calcular total acumulado
+                if start_hour > end_hour and 0 <= hour_int <= end_hour:
+                    real_count = self._calculate_total_with_dawn_hours(
+                        hourly_data, week_str, hour_int
+                    )
+                else:
+                    real_count = count
                 break
 
         # Calcular porcentaje de cumplimiento como cuánto falta para llegar a la meta (negativo si falta, positivo si supera)

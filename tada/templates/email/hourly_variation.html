@@ -4,341 +4,134 @@
 <html lang="es">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <style>
-      body {
-        font-family: Arial, sans-serif;
-        font-size: 13px;
-        margin: 20px;
-        background-color: #f9f9f9;
-      }
-      h2 {
-        color: #333;
-        text-align: center;
-        margin-bottom: 20px;
-      }
-      table {
-        width: 100%;
-        border-collapse: collapse;
-        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-      }
-      th,
-      td {
-        border: 1px solid #ccc;
-        text-align: center;
-      }
-      .hourly-variation-table td {
-        padding: 8px 12px;
-      }
-      th {
-        background-color: #1f1f1f;
-        color: white;
-        font-weight: bold;
-        vertical-align: middle;
-      }
-      th[colspan] {
-        text-align: center;
-        font-size: 14px;
-        letter-spacing: 1px;
-      }
-      td.hour {
-        font-weight: bold;
-        background-color: #f5f5f5;
-        vertical-align: middle;
-      }
-      .bar-container {
-        width: 100px;
-        height: 12px;
-        background-color: #eee;
-        margin: 4px auto;
-        position: relative;
-        border-radius: 6px;
-        overflow: hidden;
-      }
-      .bar {
-        height: 100%;
-        background-color: #90ee90;
-        transition: width 0.3s ease;
-      }
-      .bar-negative {
-        background-color: #f08080;
-      }
-      .variation-cell {
-        min-width: 120px;
-      }
-      .info-section {
-        background-color: lightgray;
-        border: 1px solid #d0d0d0;
-        border-radius: 8px;
-        padding: 15px;
-        margin-bottom: 20px;
-      }
-      .info-section p {
-        margin: 5px 0;
-      }
-      .grid-container {
-        width: 100%;
-        margin-bottom: 20px;
-        border-collapse: collapse;
-      }
-      .grid-container td {
-        vertical-align: top;
-        width: 50%;
-        border: none;
-      }
-      .progress-bar-container {
-        width: 80px;
-        height: 8px;
-        background-color: #eee;
-        margin: 2px auto;
-        position: relative;
-        border-radius: 4px;
-        overflow: hidden;
-      }
-      .progress-bar {
-        height: 100%;
-        transition: width 0.3s ease;
-      }
-      
-      /* Responsive design for mobile */
-      @media (max-width: 768px) {
-        body {
-          margin: 10px;
-          font-size: 12px;
-        }
-        
-        .grid-container td {
-          display: block;
-          width: 100%;
-          padding: 0 0 15px 0;
-        }
-        
-        .info-section {
-          padding: 15px;
-        }
-        
-        .info-section h3 {
-          font-size: 14px;
-          margin-bottom: 8px;
-        }
-        
-        .metric-row {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding: 8px 15px;
-          background-color: rgba(255, 255, 255, 0.5);
-          border-radius: 4px;
-          margin: 2px 0;
-        }
-        
-        .metric-label {
-          font-size: 12px;
-          color: #666;
-        }
-        
-        .metric-value {
-          font-size: 16px;
-          font-weight: bold;
-          display: flex;
-          align-items: center;
-          gap: 8px;
-        }
-        
-        .progress-bar-container {
-          width: 60px;
-          height: 6px;
-        }
-        
-        table {
-          font-size: 11px;
-        }
-        
-        th, td {
-          padding: 4px 6px;
-        }
-        
-        .bar-container {
-          width: 80px;
-          height: 10px;
-        }
-        
-        .variation-cell {
-          min-width: 100px;
-        }
-      }
-      
-      @media (max-width: 480px) {
-        body {
-          margin: 5px;
-          font-size: 11px;
-        }
-        
-        h2 {
-          font-size: 16px;
-          margin-bottom: 15px;
-        }
-        
-        .info-section {
-          padding: 12px;
-        }
-        
-        .info-section h3 {
-          font-size: 13px;
-        }
-        
-        .metric-value {
-          font-size: 14px;
-        }
-        
-        .progress-bar-container {
-          width: 50px;
-          height: 5px;
-        }
-        
-        table {
-          font-size: 10px;
-        }
-        
-        th, td {
-          padding: 3px 4px;
-        }
-        
-        .bar-container {
-          width: 60px;
-          height: 8px;
-        }
-        
-        .variation-cell {
-          min-width: 80px;
-        }
-        
-        .metric-card {
-          padding: 15px !important;
-        }
-      }
-    </style>
   </head>
-  <body>
-    <h2>Reporte de Pedidos Acumulados por Hora</h2>
+  <body style="font-family: Arial, sans-serif; padding: 20px;">
 
-    <!-- Información del día -->
-    <div class="info-section">
-      <p style="font-size: 14px; color: #333; font-weight: bold; text-align: center;">📅 Día: {{ dia_nombre }}</p>
-      <p style="font-size: 12px; color: #666; text-align: center;">
-        📊 # Órdenes: <strong>{{ total_ordenes_ultima_hora }}</strong>
-      </p>
-    </div>
-
-    <!-- Meta Diaria vs Real y Variación Diaria -->
-    <table class="grid-container">
+    <!-- Contenedor de tarjetas superiores -->
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom: 20px;">
       <tr>
-        <td>
-          <!-- Meta Diaria vs Real -->
-          <div class="info-section metric-card" style="padding: 0">
-            <h3 style="color: #333; text-align: center; margin-bottom: 10px;">🎯 Meta Diaria vs Real</h3>
-            <table style="width: 100%; border-collapse: collapse;">
-              <tr>
-                <td style="text-align: center; padding: 5px; border: none;">
-                  <div class="metric-row">
-                    <span class="metric-label">Real</span>
-                    <span class="metric-value" style="color: #333;">{{ daily_meta_vs_real.real_count }}</span>
-                  </div>
-                </td>
-              </tr>
-              <tr>
-                <td style="text-align: center; padding: 5px; border: none;">
-                  <div class="metric-row">
-                    <span class="metric-label">Meta</span>
-                    <span class="metric-value" style="color: #333;">{{ daily_meta_vs_real.meta_count }}</span>
-                  </div>
-                </td>
-              </tr>
-              <tr>
-                <td style="text-align: center; padding: 5px; border: none;">
-                  <div class="metric-row">
-                    <span class="metric-label">Logro</span>
-                    <span class="metric-value" style="color: {% if daily_meta_vs_real.achievement_percentage >= 100 %}#4CAF50{% elif daily_meta_vs_real.achievement_percentage >= 80 %}#FF9800{% else %}#F44336{% endif %};">
-                      {{ daily_meta_vs_real.achievement_percentage }}%
-                      <div class="progress-bar-container">
-                        <div class="progress-bar" style="width: {% if daily_meta_vs_real.achievement_percentage > 100 %}100{% else %}{{ daily_meta_vs_real.achievement_percentage }}{% endif %}%; background-color: {% if daily_meta_vs_real.achievement_percentage >= 100 %}#4CAF50{% elif daily_meta_vs_real.achievement_percentage >= 80 %}#FF9800{% else %}#F44336{% endif %};"></div>
-                      </div>
-                    </span>
-                  </div>
-                </td>
-              </tr>
-            </table>
-          </div>
+        <!-- Meta Diaria -->
+        <td width="50%" valign="top" style="padding-right: 10px;">
+          <table width="100%" cellpadding="6" cellspacing="0" style="background-color: #ffffff; border-radius: 10px; border: 1px solid #e0e0e0;">
+            <tr>
+              <td colspan="2" style="font-size: 15px; font-weight: bold; color: #000000;">Meta<br />Diaria</td>
+            </tr>
+            <tr>
+              <td style="color: #888888; font-size: 13px;">#Órdenes</td>
+              <td align="right" style="color: #007bff; font-size: 18px; font-weight: bold;">{{ daily_meta_vs_real.real_count }}</td>
+            </tr>
+            <tr>
+              <td style="color: #888888; font-size: 13px;">Meta</td>
+              <td align="right" style="color: #28a745; font-size: 18px; font-weight: bold;">{{ daily_meta_vs_real.meta_count }}</td>
+            </tr>
+            <tr>
+              <td style="color: #888888; font-size: 13px;">Cumplimiento</td>
+              <td align="right" style="color: {% if daily_meta_vs_real.achievement_percentage >= 0 %}#28a745{% else %}#dc3545{% endif %}; font-size: 18px; font-weight: bold;">{{ daily_meta_vs_real.achievement_percentage }}%</td>
+            </tr>
+            <tr>
+              <td colspan="2">
+                <table width="100%" cellpadding="0" cellspacing="0">
+                  <tr>
+                    <td style="background-color: #eeeeee; border-radius: 4px; height: 8px;">
+                      {% if daily_meta_vs_real.achievement_percentage >= 0 %}
+                        <table cellpadding="0" cellspacing="0" width="{% if daily_meta_vs_real.achievement_percentage > 100 %}100{% else %}{{ daily_meta_vs_real.achievement_percentage }}{% endif %}%">
+                          <tr>
+                            <td style="background-color: #28a745; height: 8px; border-radius: 4px;"></td>
+                          </tr>
+                        </table>
+                      {% else %}
+                        <table cellpadding="0" cellspacing="0" width="{% if daily_meta_vs_real.achievement_percentage|abs_value > 100 %}100{% else %}{{ daily_meta_vs_real.achievement_percentage|abs_value }}{% endif %}%">
+                          <tr>
+                            <td style="background-color: #dc3545; height: 8px; border-radius: 4px;"></td>
+                          </tr>
+                        </table>
+                      {% endif %}
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
         </td>
-        <td>
-          <!-- Variación Diaria -->
-          <div class="info-section metric-card" style="padding-left: 10px !important; padding: 0">
-            <h3 style="color: #333; text-align: center; margin-bottom: 10px;">📈 Variación Diaria</h3>
-            <table style="width: 100%; border-collapse: collapse;">
-              <tr>
-                <td style="text-align: center; padding: 5px; border: none;">
-                  <div class="metric-row">
-                    <span class="metric-label">Semana Actual</span>
-                    <span class="metric-value" style="color: #333;">{{ daily_variation.current_week_total }}</span>
-                  </div>
-                </td>
-              </tr>
-              <tr>
-                <td style="text-align: center; padding: 5px; border: none;">
-                  <div class="metric-row">
-                    <span class="metric-label">Semana Anterior</span>
-                    <span class="metric-value" style="color: #333;">{{ daily_variation.previous_week_total }}</span>
-                  </div>
-                </td>
-              </tr>
-              <tr>
-                <td style="text-align: center; padding: 5px; border: none;">
-                  <div class="metric-row">
-                    <span class="metric-label">Variación</span>
-                    <span class="metric-value" style="color: {% if daily_variation.variation_percentage >= 0 %}#4CAF50{% else %}#F44336{% endif %};">
-                      {{ daily_variation.variation_percentage }}%
-                      <div class="progress-bar-container">
-                        <div class="progress-bar" style="width: {% if daily_variation.variation_percentage|abs_value > 100 %}100{% else %}{{ daily_variation.variation_percentage|abs_value }}{% endif %}%; background-color: {% if daily_variation.variation_percentage >= 0 %}#4CAF50{% else %}#F44336{% endif %};"></div>
-                      </div>
-                    </span>
-                  </div>
-                </td>
-              </tr>
-            </table>
-          </div>
+
+        <!-- Variación Semanal -->
+        <td width="50%" valign="top" style="padding-left: 10px;">
+          <table width="100%" cellpadding="6" cellspacing="0" style="background-color: #ffffff; border-radius: 10px; border: 1px solid #e0e0e0;">
+            <tr>
+              <td colspan="2" style="font-size: 15px; font-weight: bold; color: #000000;">Variación<br />Semanal</td>
+            </tr>
+            <tr>
+              <td style="color: #888888; font-size: 13px;">Actual</td>
+              <td align="right" style="font-size: 18px; font-weight: bold;">{{ current_time.w_actual }}</td>
+            </tr>
+            <tr>
+              <td style="color: #888888; font-size: 13px;">Anterior</td>
+              <td align="right" style="font-size: 18px; font-weight: bold;">{{ current_time.w_pasada }}</td>
+            </tr>
+            <tr>
+              <td style="color: #888888; font-size: 13px;">Variación</td>
+              <td align="right" style="color: {% if current_time.variacion >= 0 %}#28a745{% else %}#dc3545{% endif %}; font-size: 18px; font-weight: bold;">
+                {{ current_time.variacion }}%
+              </td>
+            </tr>
+            <tr>
+              <td colspan="2">
+                <table width="100%" cellpadding="0" cellspacing="0">
+                  <tr>
+                    <td style="background-color: #eeeeee; border-radius: 4px; height: 8px;">
+                      {% if current_time.variacion != 0 %}
+                        <table cellpadding="0" cellspacing="0" width="{% if current_time.variacion|abs_value > 100 %}100{% else %}{{ current_time.variacion|abs_value }}{% endif %}%">
+                          <tr>
+                            <td style="background-color: {% if current_time.variacion >= 0 %}#28a745{% else %}#dc3545{% endif %}; height: 8px; border-radius: 4px;"></td>
+                          </tr>
+                        </table>
+                      {% endif %}
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
         </td>
       </tr>
     </table>
 
-    <table class="hourly-variation-table">
+    <!-- Tabla de variación -->
+    <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse: collapse; background-color: #ffffff; border-radius: 10px;">
       <thead>
         <tr>
-          <th rowspan="2">Hora</th>
-          <th colspan="{{ weeks|length }}">Semanas</th>
-          <th rowspan="2">Variación por Hora</th>
+          <th rowspan="2" style="background-color: #1f1f1f; color: white; text-align: left; padding-left: 8px">HORA</th>
+          <th colspan="{{ weeks|length }}" style="background-color: #1f1f1f; color: white; text-align: left; padding-left: 8px; padding-bottom: 4px; padding-top: 8px">Semanas</th>
+          <th rowspan="2" style="background-color: #1f1f1f; color: white; text-align: left; padding-left: 8px">VAR.%</th>
         </tr>
         <tr>
           {% for week in weeks %}
-            <th>{{ week }}</th>
+        <th style="background-color: #1f1f1f; color: white; text-align: left; padding-left: 8px; padding-bottom: 8px;">S.{{ week }}</th>
           {% endfor %}
         </tr>
       </thead>
       <tbody>
         {% for row in data %}
           <tr>
-            <td class="hour">{{ row.hora }}</td>
+            <td style="font-weight: bold; background-color: #f9f9f9; padding-left: 8px;">{{ row.hora }}</td>
             {% for week in weeks %}
               <td>{{ row.semanas|get_item:week }}</td>
             {% endfor %}
-            <td class="variation-cell">
-              {{ row.variacion }}%<div class="bar-container">
-                <div class="bar {% if row.variacion < 0 %}bar-negative{% endif %}"
-                  style="width:{% if max_variacion > 0 %}
-                    {{ row.variacion|abs_value|div:max_variacion|mul:100 }}
-                  {% else %}
-                    0
-                  {% endif %}%;"></div>
-              </div>
+            <td>
+              <div style="font-weight:bold; padding: 8px;">{{ row.variacion }}%</div>
+              <table width="100%" cellpadding="0" cellspacing="0" style=" margin-bottom:4px">
+                <tr>
+                  <td style="background-color: #eeeeee; border-radius: 10px; height: 10px;">
+                    {% if row.variacion != 0 %}
+                      <table cellpadding="0" cellspacing="0" width="{% if row.variacion|abs_value > 100 %}100{% else %}{{ row.variacion|abs_value }}{% endif %}%">
+                        <tr>
+                          <td style="background-color: {% if row.variacion == -100 %}#888888{% elif row.variacion < 0 %}#dc3545{% else %}#28a745{% endif %}; height: 10px; border-radius: 10px;"></td>
+                        </tr>
+                      </table>
+                    {% endif %}
+                  </td>
+                </tr>
+              </table>
             </td>
           </tr>
         {% endfor %}

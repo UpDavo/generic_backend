@@ -128,6 +128,7 @@ class EmailNotification(BaseModel):
                 template=email_template,
                 email_data=email_data,
                 recipient_list=email_notification,
+                # recipient_list=['updavo@gmail.com'],
                 attachments=attachments
             ).start()
 
