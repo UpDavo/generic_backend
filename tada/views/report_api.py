@@ -7,6 +7,7 @@ from datetime import datetime
 from tada.services.report_service import ReportService
 from tada.models import TrafficEvent, ExecutionLog
 from tada.utils.constants import APPS
+from tada.services.command_service import execute_fetch
 
 
 class DatetimeVariationReportView(APIView):
@@ -14,20 +15,6 @@ class DatetimeVariationReportView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        """
-        Obtiene la variación de tráfico por hora para un día específico.
-
-        Query Parameters:
-        - dia (int, required): Día de la semana (1=Lunes, 2=Martes, ..., 7=Domingo)
-        - start_week (int, optional): Número de semana de inicio
-        - end_week (int, optional): Número de semana de fin
-        - year (int, optional): Año para el cual obtener los datos
-        - start_hour (int, optional): Hora de inicio del rango (default: 7)
-        - end_hour (int, optional): Hora de fin del rango (default: 3)
-
-        Returns:
-        - JSON con datos de variación por hora, variación diaria y comparación con meta
-        """
         try:
             # Obtener parámetros de la query
             dia = request.query_params.get('dia')
@@ -155,34 +142,40 @@ class DatetimeVariationReportView(APIView):
         return dias_nombres.get(dia, "Desconocido")
 
 
+class ReportFetchView(APIView):
+    """Vista para obtener reportes"""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        try:
+            execute_fetch()
+
+            # Preparar respuesta
+            response_data = {
+                'success': True,
+                'message': f'Data tomada correctamente para la hora actual',
+            }
+
+            return Response(response_data, status=status.HTTP_200_OK)
+
+        except ValueError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return Response(
+                {'error': f'Error interno del servidor: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
 class ReportEmailView(APIView):
     """Vista para enviar reportes por email"""
     permission_classes = [IsAuthenticated]
 
-    def post(self, request):
-        """
-        Envía un reporte por email para un día específico.
-
-        Body Parameters:
-        - dia (int, required): Día de la semana (1=Lunes, 2=Martes, ..., 7=Domingo)
-        - start_week (int, optional): Número de semana de inicio
-        - end_week (int, optional): Número de semana de fin
-        - year (int, optional): Año para el cual obtener los datos
-        - start_hour (int, optional): Hora de inicio del rango (default: 7)
-        - end_hour (int, optional): Hora de fin del rango (default: 3)
-
-        Returns:
-        - JSON confirmando el envío del email
-        """
+    def get(self, request):
         try:
-            # Obtener parámetros del body
-            dia = request.data.get('dia')
-            start_week = request.data.get('start_week')
-            end_week = request.data.get('end_week')
-            year = request.data.get('year')
-            start_hour = request.data.get('start_hour', 7)
-            end_hour = request.data.get('end_hour', 3)
-
             # Validar parámetro obligatorio
             if not dia:
                 return Response(

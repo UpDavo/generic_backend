@@ -111,5 +111,7 @@ urlpatterns = [
          name='datetime-variation-report'),
     path('reports/send-email/', ReportEmailView.as_view(),
          name='report-send-email'),
+    path('reports/fetch-data/', ReportFetchView.as_view(),
+         name='report-fetch-data'),
 
 ]
