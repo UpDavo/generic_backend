@@ -60,7 +60,7 @@ class EmailNotificationDetailView(RetrieveUpdateDestroyAPIView):
 
     def perform_destroy(self, instance):
         """Soft delete de la notificación"""
-        instance.soft_delete()
+        instance.delete()
 
 
 class EmailNotificationByTypeView(ListAPIView):

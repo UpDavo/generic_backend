@@ -86,7 +86,7 @@ class EmailNotification(BaseModel):
 
             # Si no tiene más tipos de notificación, eliminar el registro
             if not email_notification.notification_type.exists():
-                email_notification.soft_delete()
+                email_notification.delete()
 
             return True
         except (EmailNotificationType.DoesNotExist, cls.DoesNotExist):
