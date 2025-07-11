@@ -7,13 +7,13 @@ from tada.services.report_service import ReportService
 from tada.utils.constants import APPS, START_WINDOW, END_WINDOW, OPERATING_HOURS, DAY_NAMES, DAY_SCHEDULES
 
 
-def get_guayaquil_time(self):
+def get_guayaquil_time():
     """Obtiene la fecha y hora actual en zona horaria de Guayaquil, Ecuador"""
     guayaquil_tz = pytz.timezone('America/Guayaquil')
     return timezone.now().astimezone(guayaquil_tz)
 
 
-def get_adjusted_time_for_window(self, current_datetime):
+def get_adjusted_time_for_window(current_datetime):
     current_minute = current_datetime.minute
     current_hour = current_datetime.hour
     current_date = current_datetime.date()
@@ -40,7 +40,7 @@ def get_adjusted_time_for_window(self, current_datetime):
     return current_date, adjusted_time
 
 
-def is_in_operating_hours(self, current_datetime):
+def is_in_operating_hours(current_datetime):
     day_of_week = current_datetime.isoweekday()  # 1=lunes, 7=domingo
     current_hour = current_datetime.hour
 

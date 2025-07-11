@@ -50,7 +50,7 @@ class EmailThread(threading.Thread):
                     email.attach(
                         attachment['filename'], attachment['file'])
 
-            print(f"Enviando correo a: {self.recipient_list}")
+            # print(f"Enviando correo a: {self.recipient_list}")
             email.send()
             print("Correo enviado exitosamente.")
 
