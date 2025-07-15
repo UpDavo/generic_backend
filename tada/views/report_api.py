@@ -6,8 +6,8 @@ from django.utils.dateparse import parse_date
 from datetime import datetime
 from tada.services.report_service import ReportService
 from tada.models import TrafficEvent, ExecutionLog
-from tada.utils.constants import APPS
-from tada.services.command_service import execute_fetch
+from tada.utils.constants import APPS, OPERATING_HOURS, DAY_NAMES
+from tada.services.command_service import execute_fetch_simple
 
 
 class DatetimeVariationReportView(APIView):
@@ -16,13 +16,11 @@ class DatetimeVariationReportView(APIView):
 
     def get(self, request):
         try:
-            # Obtener parámetros de la query
+            # Obtener parámetros de la query (sin start_hour y end_hour)
             dia = request.query_params.get('dia')
             start_week = request.query_params.get('start_week')
             end_week = request.query_params.get('end_week')
             year = request.query_params.get('year')
-            start_hour = request.query_params.get('start_hour', 7)
-            end_hour = request.query_params.get('end_hour', 3)
 
             # Validar parámetro obligatorio
             if not dia:
@@ -50,30 +48,29 @@ class DatetimeVariationReportView(APIView):
                     end_week = int(end_week)
                 if year:
                     year = int(year)
-                start_hour = int(start_hour)
-                end_hour = int(end_hour)
             except ValueError:
                 return Response(
                     {'error': 'Los parámetros numéricos deben ser enteros válidos'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # Validar rangos de horas
-            if start_hour < 0 or start_hour > 23:
+            # Obtener horarios desde constantes según el día
+            start_hour = None
+            end_hour = None
+            if dia in OPERATING_HOURS:
+                schedule = OPERATING_HOURS[dia]
+                start_hour = schedule['start_hour']
+                end_hour = schedule['end_hour']
+            else:
                 return Response(
-                    {'error': 'start_hour debe estar entre 0 y 23'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            if end_hour < 0 or end_hour > 23:
-                return Response(
-                    {'error': 'end_hour debe estar entre 0 y 23'},
+                    {'error': f'No hay horarios configurados para el día {dia}'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
             # Instanciar el servicio de reportes
             report_service = ReportService()
 
-            # Obtener los datos
+            # Obtener los datos usando horarios de las constantes
             report_data = report_service.get_datetime_variation(
                 dia=dia,
                 start_week=start_week,
@@ -110,12 +107,15 @@ class DatetimeVariationReportView(APIView):
                 'data': report_data,
                 'metadata': {
                     'dia': dia,
-                    'dia_nombre': self._get_dia_nombre(dia),
+                    'dia_nombre': DAY_NAMES.get(dia, "Desconocido"),
                     'start_week': start_week,
                     'end_week': end_week,
                     'year': year or datetime.now().year,
                     'start_hour': start_hour,
                     'end_hour': end_hour,
+                    'horario_range': f"{start_hour:02d}:00-{end_hour:02d}:00",
+                    'crosses_midnight': start_hour > end_hour,
+                    'schedule_source': 'OPERATING_HOURS',
                     'generated_at': datetime.now().isoformat()
                 }
             }
@@ -133,14 +133,6 @@ class DatetimeVariationReportView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-    def _get_dia_nombre(self, dia):
-        """Convierte número de día a nombre"""
-        dias_nombres = {
-            1: "Lunes", 2: "Martes", 3: "Miércoles", 4: "Jueves",
-            5: "Viernes", 6: "Sábado", 7: "Domingo"
-        }
-        return dias_nombres.get(dia, "Desconocido")
-
 
 class ReportFetchView(APIView):
     """Vista para obtener reportes"""
@@ -148,7 +140,7 @@ class ReportFetchView(APIView):
 
     def post(self, request):
         try:
-            execute_fetch()
+            execute_fetch_simple()
 
             # Preparar respuesta
             response_data = {
@@ -176,6 +168,12 @@ class ReportEmailView(APIView):
 
     def get(self, request):
         try:
+            # Obtener parámetros de la query (sin start_hour y end_hour)
+            dia = request.query_params.get('dia')
+            start_week = request.query_params.get('start_week')
+            end_week = request.query_params.get('end_week')
+            year = request.query_params.get('year')
+
             # Validar parámetro obligatorio
             if not dia:
                 return Response(
@@ -202,23 +200,22 @@ class ReportEmailView(APIView):
                     end_week = int(end_week)
                 if year:
                     year = int(year)
-                start_hour = int(start_hour)
-                end_hour = int(end_hour)
             except ValueError:
                 return Response(
                     {'error': 'Los parámetros numéricos deben ser enteros válidos'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # Validar rangos de horas
-            if start_hour < 0 or start_hour > 23:
+            # Obtener horarios desde constantes según el día
+            start_hour = None
+            end_hour = None
+            if dia in OPERATING_HOURS:
+                schedule = OPERATING_HOURS[dia]
+                start_hour = schedule['start_hour']
+                end_hour = schedule['end_hour']
+            else:
                 return Response(
-                    {'error': 'start_hour debe estar entre 0 y 23'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            if end_hour < 0 or end_hour > 23:
-                return Response(
-                    {'error': 'end_hour debe estar entre 0 y 23'},
+                    {'error': f'No hay horarios configurados para el día {dia}'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
@@ -243,7 +240,7 @@ class ReportEmailView(APIView):
                 event = TrafficEvent.objects.get(id=2)
 
                 # Crear descripción del comando con todos los parámetros
-                command_description = f"Envío de Reporte por Email - Día: {self._get_dia_nombre(dia)}"
+                command_description = f"Envío de Reporte por Email - Día: {DAY_NAMES.get(dia, 'Desconocido')}"
                 if start_week:
                     command_description += f", Semana inicio: {start_week}"
                 if end_week:
@@ -271,15 +268,18 @@ class ReportEmailView(APIView):
             # Preparar respuesta
             response_data = {
                 'success': True,
-                'message': f'Reporte enviado por email exitosamente para el día {self._get_dia_nombre(dia)}',
+                'message': f'Reporte enviado por email exitosamente para el día {DAY_NAMES.get(dia, "Desconocido")}',
                 'parameters': {
                     'dia': dia,
-                    'dia_nombre': self._get_dia_nombre(dia),
+                    'dia_nombre': DAY_NAMES.get(dia, "Desconocido"),
                     'start_week': start_week,
                     'end_week': end_week,
                     'year': year or datetime.now().year,
                     'start_hour': start_hour,
-                    'end_hour': end_hour
+                    'end_hour': end_hour,
+                    'horario_range': f"{start_hour:02d}:00-{end_hour:02d}:00",
+                    'crosses_midnight': start_hour > end_hour,
+                    'schedule_source': 'OPERATING_HOURS'
                 },
                 'sent_at': datetime.now().isoformat(),
                 'execution_logged': True
@@ -297,11 +297,3 @@ class ReportEmailView(APIView):
                 {'error': f'Error interno del servidor: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
-    def _get_dia_nombre(self, dia):
-        """Convierte número de día a nombre"""
-        dias_nombres = {
-            1: "Lunes", 2: "Martes", 3: "Miércoles", 4: "Jueves",
-            5: "Viernes", 6: "Sábado", 7: "Domingo"
-        }
-        return dias_nombres.get(dia, "Desconocido")
