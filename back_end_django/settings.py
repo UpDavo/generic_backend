@@ -172,9 +172,20 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 
+# Media files
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
+
+# Base URL for absolute URLs
+BASE_URL = config('BASE_URL', default='http://localhost:8000')
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 BRAZE_KEY = config('BRAZE_KEY', default='')
 BRAZE_URL = config('BRAZE_URL', default='')
+
+# Wasender Config
+WASENDER_KEY = config('WASENDER_KEY', default='')
+WASENDER_URL = config('WASENDER_URL', default='')

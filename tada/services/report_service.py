@@ -3,6 +3,8 @@ from tada.models.trafficLog import TrafficLog
 from tada.models.dailyMeta import DailyMeta
 from core.utils.emailThread import EmailThread
 from core.models import EmailNotification, EmailNotificationType
+from core.services.whatsapp_service import WhatsAppService
+from core.utils.html_to_image import HTMLToImageService
 from tada.utils.constants import START_WINDOW, END_WINDOW, DAY_NAMES, OPERATING_HOURS
 
 
@@ -692,6 +694,16 @@ class ReportService:
                 if ultima_hora_hoy:
                     subject += f" - {ultima_hora_hoy}"
 
+            # Verificar si hay emails configurados antes de enviar
+            emails_configurados = EmailNotification.get_emails_by_type_constant(
+                notification_type_constant=EmailNotificationType.TRAFFIC_REPORT
+            )
+            emails_configurados = list(emails_configurados)
+
+            if not emails_configurados:
+                print("No hay emails configurados para recibir reportes de tráfico")
+                return
+
             # Enviar el correo usando el nuevo método con TRAFFIC_REPORT
             EmailNotification.send_notification_by_type_constant(
                 email_template='email/hourly_variation.html',
@@ -702,6 +714,220 @@ class ReportService:
 
         except Exception as e:
             print(f"Error al enviar el reporte por email: {e}")
+
+    def send_report_by_whatsapp(self, dia_seleccionado, start_week=None, end_week=None, year=None, start_hour=7, end_hour=3):
+        """
+        Envía el reporte de tráfico por WhatsApp usando el servicio de WhatsApp.
+        Genera una imagen a partir del template HTML y la envía como adjunto.
+
+        Args:
+            dia_seleccionado (int): Día de la semana (1=Lunes, 7=Domingo)
+            start_week (int): Semana de inicio (opcional)
+            end_week (int): Semana de fin (opcional)
+            year (int): Año (opcional)
+            start_hour (int): Hora de inicio (opcional)
+            end_hour (int): Hora de fin (opcional)
+        """
+        html_to_image_service = HTMLToImageService()
+        whatsapp_service = WhatsAppService()
+        image_url = None
+
+        try:
+            # Generar el reporte con los parámetros recibidos
+            report_data = self.get_datetime_variation(
+                dia=dia_seleccionado,
+                start_week=start_week,
+                end_week=end_week,
+                year=year,
+                start_hour=start_hour,
+                end_hour=end_hour
+            )
+
+            # Extraer datos del nuevo formato de respuesta
+            result = report_data['hourly_data']
+            daily_variation = report_data['daily_variation']
+            daily_meta_vs_real = report_data['daily_meta_vs_real']
+            current_time = report_data['current_time']
+
+            # Usar constante para nombres de días
+            dia_nombre = DAY_NAMES.get(dia_seleccionado, "Desconocido")
+
+            # Optimización: Calcular todos los valores en una sola iteración
+            if not result:
+                # Manejar caso de datos vacíos
+                whatsapp_data = {
+                    'data': [],
+                    'weeks': [],
+                    'max_variacion': 1,
+                    'dia_nombre': dia_nombre,
+                    'total_ordenes_ultima_hora': 0,
+                    'daily_variation': daily_variation,
+                    'daily_meta_vs_real': daily_meta_vs_real,
+                    'current_time': current_time
+                }
+
+                # Generar imagen desde el template HTML
+                image_url = html_to_image_service.generate_image_from_template(
+                    template_path='email/hourly_variation.html',
+                    context_data=whatsapp_data
+                )
+
+                # Si la imagen falla o contiene localhost, no enviar imagen
+                if not image_url or 'localhost' in str(image_url):
+                    if 'localhost' in str(image_url):
+                        print(
+                            "No se puede enviar imagen con URL localhost, enviando solo texto")
+                    else:
+                        print(
+                            "No se pudo generar la imagen del reporte, enviando solo texto")
+                    image_url = None
+
+                # Crear mensaje según disponibilidad de imagen
+                if image_url:
+                    # Mensaje corto cuando hay imagen válida
+                    message_text = f"📊 Corte {dia_nombre} - Sin datos"
+                else:
+                    # Mensaje descriptivo cuando no hay imagen
+                    message_text = f"📊 Tada Ecuador Pedidos {dia_nombre} - Sin datos disponibles"
+
+                    # Agregar nota sobre imagen basada en la URL ya generada
+                    if 'localhost' in str(image_url or ''):
+                        message_text += "\n\n⚠️ Imagen no disponible en entorno local."
+                    else:
+                        message_text += "\n\n⚠️ Imagen falló en generar, revisa la configuración del sistema."
+            else:
+                # Obtener semanas únicas de manera eficiente
+                weeks = set()
+                variaciones = []
+
+                for row in result:
+                    weeks.update(row["semanas"].keys())
+                    if row['variacion'] is not None:
+                        variaciones.append(abs(row['variacion']))
+
+                weeks = sorted(int(k) for k in weeks)
+                max_variacion = max(variaciones) if variaciones else 1
+
+                # Encontrar la última hora con datos en una sola iteración reversa
+                ultima_semana_str = str(max(weeks)) if weeks else None
+                total_ordenes_ultima_hora = 0
+                ultima_hora_hoy = None
+
+                if ultima_semana_str:
+                    for row in reversed(result):
+                        if ultima_semana_str in row['semanas'] and row['semanas'][ultima_semana_str] > 0:
+                            if total_ordenes_ultima_hora == 0:  # Primera vez que encontramos datos
+                                total_ordenes_ultima_hora = row['semanas'][ultima_semana_str]
+                                ultima_hora_hoy = row['hora']
+                            break
+
+                # Preparar data para el template
+                whatsapp_data = {
+                    'data': result,
+                    'weeks': weeks,
+                    'max_variacion': max_variacion,
+                    'dia_nombre': dia_nombre,
+                    'total_ordenes_ultima_hora': total_ordenes_ultima_hora,
+                    'daily_variation': daily_variation,
+                    'daily_meta_vs_real': daily_meta_vs_real,
+                    'current_time': current_time
+                }
+
+                # Generar imagen desde el template HTML
+                image_url = html_to_image_service.generate_image_from_template(
+                    template_path='email/hourly_variation.html',
+                    context_data=whatsapp_data
+                )
+
+                # Si la imagen falla o contiene localhost, no enviar imagen
+                if not image_url or 'localhost' in str(image_url):
+                    if 'localhost' in str(image_url):
+                        print(
+                            "No se puede enviar imagen con URL localhost, enviando solo texto")
+                    else:
+                        print(
+                            "No se pudo generar la imagen del reporte, enviando solo texto")
+                    image_url = None
+
+                # Crear mensaje según disponibilidad de imagen
+                if image_url:
+                    # Mensaje corto cuando hay imagen válida
+                    message_text = f"📊 Corte {dia_nombre}"
+                    if ultima_hora_hoy:
+                        message_text += f" - {ultima_hora_hoy}"
+                else:
+                    # Mensaje descriptivo cuando no hay imagen
+                    message_text = f"📊 Corte {dia_nombre}"
+                    if ultima_hora_hoy:
+                        message_text += f" - {ultima_hora_hoy}"
+
+                    # Agregar información resumida en el texto
+                    if current_time:
+                        variacion_emoji = "📈" if current_time.get(
+                            'variacion', 0) >= 0 else "📉"
+                        message_text += f"\n\n{variacion_emoji} Variación: {current_time.get('variacion', 0)}%"
+                        message_text += f"\nActual: {current_time.get('w_actual', 0)} | Anterior: {current_time.get('w_pasada', 0)}"
+
+                    if daily_meta_vs_real and daily_meta_vs_real.get('has_meta'):
+                        cumplimiento_emoji = "✅" if daily_meta_vs_real.get(
+                            'achievement_percentage', 0) >= 0 else "⚠️"
+                        message_text += f"\n\n{cumplimiento_emoji} Meta: {daily_meta_vs_real.get('achievement_percentage', 0)}%"
+                        message_text += f"\nReal: {daily_meta_vs_real.get('real_count', 0)} | Meta: {daily_meta_vs_real.get('meta_count', 0)}"
+
+                    # Agregar nota sobre imagen basada en la URL ya generada
+                    if 'localhost' in str(image_url or ''):
+                        message_text += "\n\n⚠️ Imagen no disponible."
+                    else:
+                        message_text += "\n\n⚠️ Imagen falló en generar."
+
+            # Obtener números de teléfono para envío
+            phone_numbers = EmailNotification.get_numbers_by_type_constant(
+                notification_type_constant=EmailNotificationType.TRAFFIC_REPORT
+            )
+            phone_numbers = list(phone_numbers)
+
+            # Si no hay números configurados, usar número por defecto
+            if not phone_numbers:
+                phone_numbers = ['+593994504722']
+                print(
+                    "No hay números de teléfono configurados, usando número por defecto: +593994504722")
+
+                # Modificar el mensaje para indicar que no hay números registrados
+                # message_text = f"⚠️ ALERTA: No hay números registrados para reportes\n\n{message_text}"
+
+            # print(f'Enviando reporte por WhatsApp a: {phone_numbers}')
+
+            # print(message_text)
+            # print(image_url)
+
+            # Enviar mensaje a cada número
+            for phone_number in phone_numbers:
+                try:
+                    # Enviar mensaje con imagen solo si está disponible y no es localhost
+                    response_data, response = whatsapp_service.send_message(
+                        to=phone_number,
+                        text=message_text,
+                        image=image_url  # Será None si falló o es localhost
+                    )
+
+                    if response.status_code == 200:
+                        print(f"Reporte enviado exitosamente a {phone_number}")
+                    else:
+                        print(
+                            f"Error al enviar reporte a {phone_number}: {response_data}")
+
+                except Exception as e:
+                    print(f"Error al enviar WhatsApp a {phone_number}: {e}")
+
+        except Exception as e:
+            print(f"Error al enviar el reporte por WhatsApp: {e}")
+        finally:
+            # Limpiar imagen temporal después del envío (solo si se generó)
+            if image_url:
+                try:
+                    html_to_image_service.cleanup_temp_image(image_url)
+                except Exception as e:
+                    print(f"Error al limpiar imagen temporal: {e}")
 
     def _get_daily_meta_vs_real_optimized(self, date, hourly_data, target_week, dia, start_hour, end_hour):
         """

@@ -17,7 +17,7 @@ class EmailNotificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = EmailNotification
         fields = [
-            'id', 'email', 'notification_type', 'notification_type_details',
+            'id', 'email', 'number', 'notification_type', 'notification_type_details',
             'notification_type_list', 'is_active', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
@@ -49,7 +49,7 @@ class EmailNotificationCreateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = EmailNotification
-        fields = ['email', 'notification_type', 'is_active']
+        fields = ['email', 'number', 'notification_type', 'is_active']
 
     def create(self, validated_data):
         notification_types = validated_data.pop('notification_type', [])

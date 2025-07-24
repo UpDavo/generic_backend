@@ -5,7 +5,8 @@ from core.utils.emailThread import EmailThread
 
 
 class EmailNotification(BaseModel):
-    email = models.EmailField()
+    email = models.EmailField(blank=True, null=True)
+    number = models.CharField(max_length=20, blank=True, null=True)
     notification_type = models.ManyToManyField(
         'core.EmailNotificationType',
         related_name='email_notifications'
@@ -55,6 +56,17 @@ class EmailNotification(BaseModel):
             is_active=True,
             deleted_at__isnull=True
         ).values_list('email', flat=True)
+
+    @classmethod
+    def get_numbers_by_type_constant(cls, notification_type_constant):
+        """Obtener números de teléfono por constante de tipo de notificación"""
+        return cls.objects.filter(
+            notification_type__notification_type=notification_type_constant,
+            is_active=True,
+            deleted_at__isnull=True,
+            number__isnull=False,
+            number__gt=''
+        ).values_list('number', flat=True)
 
     @classmethod
     def add_email_to_type(cls, email, notification_type_id):

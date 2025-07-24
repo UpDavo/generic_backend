@@ -15,3 +15,6 @@ transformers==4.48.3
 torch
 openpyxl
 pytz
+pdfkit==1.0.0
+imgkit==1.2.3
+wkhtmltopdf
