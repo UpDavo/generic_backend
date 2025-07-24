@@ -922,13 +922,7 @@ class ReportService:
 
         except Exception as e:
             print(f"Error al enviar el reporte por WhatsApp: {e}")
-        finally:
-            # Limpiar imagen temporal después del envío (solo si se generó)
-            if image_url:
-                try:
-                    html_to_image_service.cleanup_temp_image(image_url)
-                except Exception as e:
-                    print(f"Error al limpiar imagen temporal: {e}")
+        # No se realiza limpieza automática - las imágenes permanecen en S3
 
     def _get_daily_meta_vs_real_optimized(self, date, hourly_data, target_week, dia, start_hour, end_hour):
         """

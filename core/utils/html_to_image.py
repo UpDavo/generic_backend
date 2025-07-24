@@ -3,9 +3,9 @@ import tempfile
 import imgkit
 from django.template.loader import render_to_string
 from django.conf import settings
-from django.core.files.storage import default_storage
-from datetime import datetime
+from datetime import datetime, timedelta
 import uuid
+from core.utils.storage_backend import PublicUploadStorage
 
 
 class HTMLToImageService:
@@ -23,6 +23,22 @@ class HTMLToImageService:
             'format': 'png',
             'encoding': 'UTF-8',
         }
+
+        # Configurar storage de S3 para imágenes temporales
+        try:
+            self.s3_storage = PublicUploadStorage()
+            self.s3_storage.location = 'temp_reports'  # Subcarpeta en el bucket
+            # Eliminar el ACL para evitar errores con buckets que no permiten ACLs
+            self.s3_storage.default_acl = None
+            self.s3_storage.object_parameters = {
+                'CacheControl': 'max-age=86400',  # Cache por 1 día
+            }
+            self.use_s3 = True
+            print("S3 storage configurado para imágenes temporales")
+        except Exception as e:
+            print(f"Error configurando S3, usando storage local: {e}")
+            self.s3_storage = None
+            self.use_s3 = False
 
     def _get_wkhtmltoimage_config(self):
         """
@@ -97,28 +113,26 @@ class HTMLToImageService:
                         temp_html_path, temp_image_path,
                         options=options)
 
-                # Guardar la imagen en el storage temporal (media)
-                media_path = f"temp_reports/{image_filename}"
+                # Intentar subir a S3, con fallback a storage local
+                if self.use_s3 and self.s3_storage:
+                    # Subir la imagen directamente a S3
+                    s3_path = f"{image_filename}"  # Solo el nombre del archivo
 
-                # Leer la imagen generada y guardarla en el storage
-                with open(temp_image_path, 'rb') as image_file:
-                    saved_path = default_storage.save(media_path, image_file)
+                    # Leer la imagen generada y subirla a S3
+                    with open(temp_image_path, 'rb') as image_file:
+                        saved_path = self.s3_storage.save(s3_path, image_file)
 
-                # Generar URL temporal
-                if hasattr(settings, 'MEDIA_URL') and hasattr(settings, 'MEDIA_ROOT'):
-                    temp_url = f"{settings.MEDIA_URL}{saved_path}"
-                    # Si es URL relativa, convertir a absoluta
-                    if temp_url.startswith('/'):
-                        # Usar la URL base del proyecto
-                        base_url = settings.BASE_URL
-                        temp_url = f"{base_url.rstrip('/')}{temp_url}"
+                    # Generar URL de S3 (pública)
+                    temp_url = self.s3_storage.url(saved_path)
+                    print(f"Imagen temporal subida a S3: {temp_url}")
                 else:
-                    temp_url = None
+                    print("S3 no configurado correctamente")
+                    return None
 
                 return temp_url
 
             finally:
-                # Limpiar archivos temporales
+                # Solo limpiar archivos temporales del sistema
                 try:
                     os.unlink(temp_html_path)
                     os.unlink(temp_image_path)
@@ -128,22 +142,3 @@ class HTMLToImageService:
         except Exception as e:
             print(f"Error al generar imagen desde HTML: {e}")
             return None
-
-    def cleanup_temp_image(self, image_url):
-        """
-        Limpia una imagen temporal después de ser enviada
-
-        Args:
-            image_url (str): URL de la imagen a limpiar
-        """
-        try:
-            if image_url and 'temp_reports/' in image_url:
-                # Extraer el path relativo
-                path_parts = image_url.split('temp_reports/')
-                if len(path_parts) > 1:
-                    relative_path = f"temp_reports/{path_parts[1]}"
-                    if default_storage.exists(relative_path):
-                        default_storage.delete(relative_path)
-                        print(f"Imagen temporal eliminada: {relative_path}")
-        except Exception as e:
-            print(f"Error al limpiar imagen temporal: {e}")
