@@ -232,6 +232,16 @@ class ReportEmailView(APIView):
                 end_hour=end_hour
             )
 
+            # Enviar el reporte por WhatsApp
+            report_service.send_report_by_whatsapp(
+                dia_seleccionado=dia,
+                start_week=start_week,
+                end_week=end_week,
+                year=year,
+                start_hour=start_hour,
+                end_hour=end_hour
+            )
+
             # Registrar la ejecución en ExecutionLog
             current_date = datetime.now().date()
             current_time = datetime.now().time()

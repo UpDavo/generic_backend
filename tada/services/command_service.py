@@ -199,6 +199,8 @@ def execute_fetch_simple():
         dia_seleccionado = current_date.isoweekday()
         report_service.send_report_by_email(
             dia_seleccionado=dia_seleccionado)
+        report_service.send_report_by_whatsapp(
+            dia_seleccionado=dia_seleccionado)
     except Exception as e:
         print(f"Error al ejecutar el comando: {e}")
         raise e
