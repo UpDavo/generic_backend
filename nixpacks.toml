@@ -1,22 +1,14 @@
 [phases.setup]
 aptPkgs = [
-    # wkhtmltopdf y wkhtmltoimage oficiales
+    # wkhtmltopdf incluye wkhtmltoimage automáticamente
     "wkhtmltopdf",
     
-    # Dependencias del sistema para X11 (requeridas por wkhtmltopdf)
-    "libxrender1",
-    "libxtst6", 
-    "libxrandr2",
-    "libasound2",
-    "libpangocairo-1.0-0",
-    "libatk1.0-0",
-    "libcairo-gobject2",
-    "libgtk-3-0",
-    "libgdk-pixbuf2.0-0",
-    "libxss1",
-    "libgconf-2-4",
+    # Solo las dependencias esenciales para entornos headless
+    "libxrender1",     # Renderizado X11 (esencial)
+    "libxext6",        # Extensiones X11 (esencial)
+    "libfontconfig1",  # Configuración de fuentes (esencial)
     
-    # Virtual framebuffer para entornos sin display
+    # Virtual framebuffer para entornos sin display (esencial)
     "xvfb"
 ]
 
