@@ -12,10 +12,6 @@ aptPkgs = [
     "xvfb"
 ]
 
-# Comando de inicio explícito (aunque Railway debería detectar el Procfile)
-[phases.build]
-cmds = ["python manage.py collectstatic --noinput"]
-
 # Variables de entorno para wkhtmltopdf
 [variables]
 DISPLAY = ":99"
