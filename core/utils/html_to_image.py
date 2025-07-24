@@ -12,6 +12,9 @@ class HTMLToImageService:
     """Servicio para convertir plantillas HTML a imágenes"""
 
     def __init__(self):
+        # Intentar usar binario global primero, luego local como fallback
+        self.config = self._get_wkhtmltoimage_config()
+
         # Configuración para imgkit - removemos parámetros no compatibles
         self.options = {
             'width': 1200,
@@ -20,6 +23,31 @@ class HTMLToImageService:
             'format': 'png',
             'encoding': 'UTF-8',
         }
+
+    def _get_wkhtmltoimage_config(self):
+        """
+        Obtiene la configuración de wkhtmltoimage, priorizando binarios globales
+        """
+        import shutil
+
+        # 1. Intentar usar binario global del sistema
+        global_binary = shutil.which('wkhtmltoimage')
+        if global_binary:
+            print(f"Usando binario global de wkhtmltoimage: {global_binary}")
+            return imgkit.config(wkhtmltoimage=global_binary)
+
+        # 2. Fallback: usar binario local del proyecto
+        project_root = os.path.dirname(os.path.dirname(
+            os.path.dirname(os.path.abspath(__file__))))
+        local_binary = os.path.join(project_root, 'bin', 'wkhtmltoimage')
+
+        if os.path.exists(local_binary):
+            print(f"Usando binario local de wkhtmltoimage: {local_binary}")
+            return imgkit.config(wkhtmltoimage=local_binary)
+
+        # 3. Si no encuentra ninguno, usar configuración por defecto
+        print("No se encontró wkhtmltoimage ni global ni local, usando configuración por defecto")
+        return None
 
     def generate_image_from_template(self, template_path, context_data):
         """
@@ -48,10 +76,26 @@ class HTMLToImageService:
             with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as temp_image:
                 temp_image_path = temp_image.name
 
+            # Configuración para imgkit
+            options = {
+                'width': 1200,
+                'quality': 94,
+                'format': 'png',
+                'encoding': 'UTF-8',
+            }
+
             try:
-                # Convertir HTML a imagen
-                imgkit.from_file(
-                    temp_html_path, temp_image_path, options=self.options)
+                # Convertir HTML a imagen usando la configuración apropiada
+                if self.config:
+                    imgkit.from_file(
+                        temp_html_path, temp_image_path,
+                        options=options,
+                        config=self.config)
+                else:
+                    # Usar configuración por defecto si no hay binario específico
+                    imgkit.from_file(
+                        temp_html_path, temp_image_path,
+                        options=options)
 
                 # Guardar la imagen en el storage temporal (media)
                 media_path = f"temp_reports/{image_filename}"
@@ -98,8 +142,8 @@ class HTMLToImageService:
                 path_parts = image_url.split('temp_reports/')
                 if len(path_parts) > 1:
                     relative_path = f"temp_reports/{path_parts[1]}"
-                    # if default_storage.exists(relative_path):
-                    #     default_storage.delete(relative_path)
-                    #     print(f"Imagen temporal eliminada: {relative_path}")
+                    if default_storage.exists(relative_path):
+                        default_storage.delete(relative_path)
+                        print(f"Imagen temporal eliminada: {relative_path}")
         except Exception as e:
             print(f"Error al limpiar imagen temporal: {e}")

@@ -839,6 +839,8 @@ class ReportService:
                     context_data=whatsapp_data
                 )
 
+                print(image_url)
+
                 # Si la imagen falla o contiene localhost, no enviar imagen
                 if not image_url or 'localhost' in str(image_url):
                     if 'localhost' in str(image_url):
@@ -898,7 +900,6 @@ class ReportService:
             # print(f'Enviando reporte por WhatsApp a: {phone_numbers}')
 
             # print(message_text)
-            # print(image_url)
 
             # Enviar mensaje a cada número
             for phone_number in phone_numbers:
