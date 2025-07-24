@@ -6,7 +6,7 @@ from core.utils.emailThread import EmailThread
 
 class EmailNotification(BaseModel):
     email = models.EmailField(blank=True, null=True)
-    number = models.CharField(max_length=20, blank=True, null=True)
+    number = models.CharField(max_length=100, blank=True, null=True)
     notification_type = models.ManyToManyField(
         'core.EmailNotificationType',
         related_name='email_notifications'
