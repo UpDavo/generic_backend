@@ -40,6 +40,37 @@ def get_adjusted_time_for_window(current_datetime):
     return current_date, adjusted_time
 
 
+def get_logical_business_day(current_datetime):
+    """
+    Determina el día lógico del negocio basándose en los horarios de operación.
+    Si es de madrugada y pertenece al horario del día anterior (que cruza medianoche),
+    devuelve el día anterior como día lógico.
+
+    Args:
+        current_datetime: Datetime con la hora actual
+
+    Returns:
+        int: Día lógico del negocio (1=Lunes, 7=Domingo)
+    """
+    day_of_week = current_datetime.isoweekday()  # 1=lunes, 7=domingo
+    current_hour = current_datetime.hour
+
+    # Verificar si estamos en horas tempranas que podrían pertenecer al día anterior
+    if current_hour <= 6:  # Horas de madrugada (00:00 - 06:00)
+        # Verificar si el día anterior tiene horario que cruza medianoche
+        previous_day = 7 if day_of_week == 1 else day_of_week - 1
+        if previous_day in OPERATING_HOURS:
+            prev_schedule = OPERATING_HOURS[previous_day]
+            # Si el día anterior cruza medianoche Y estamos dentro del rango de fin
+            if prev_schedule['crosses_midnight'] and current_hour <= prev_schedule['end_hour']:
+                print(
+                    f"DEBUG: Día lógico - {DAY_NAMES[previous_day]} (hora {current_hour:02d}:00 pertenece al día anterior)")
+                return previous_day
+
+    # Si no es una extensión del día anterior, usar el día actual
+    return day_of_week
+
+
 def is_in_operating_hours(current_datetime):
     day_of_week = current_datetime.isoweekday()  # 1=lunes, 7=domingo
     current_hour = current_datetime.hour
@@ -135,7 +166,7 @@ def execute_fetch():
             time=current_time,
             app=APPS['EXECUTION']
         )
-        dia_seleccionado = current_date.isoweekday()
+        dia_seleccionado = get_logical_business_day(guayaquil_time)
         report_service.send_report_by_email(
             dia_seleccionado=dia_seleccionado)
         report_service.send_report_by_whatsapp(
@@ -196,7 +227,7 @@ def execute_fetch_simple():
             time=current_time,
             app=APPS['EXECUTION']
         )
-        dia_seleccionado = current_date.isoweekday()
+        dia_seleccionado = get_logical_business_day(guayaquil_time)
         report_service.send_report_by_email(
             dia_seleccionado=dia_seleccionado)
         report_service.send_report_by_whatsapp(
@@ -207,7 +238,7 @@ def execute_fetch_simple():
 
 
 def debug_operating_hours():
-    """Función de debug para verificar horarios de operación"""
+    """Función de debug para verificar horarios de operación y días lógicos"""
     from datetime import datetime
 
     # Casos de prueba específicos
@@ -233,14 +264,10 @@ def debug_operating_hours():
     for day in range(1, 8):
         if day in DAY_SCHEDULES:
             print(f"  {DAY_NAMES[day]}: {DAY_SCHEDULES[day]}")
-    print("\nValidaciones:")
+
+    print("\n=== Validaciones de horarios de operación ===")
 
     for day, hour, description in test_cases:
-        # Crear un datetime ficticio para la prueba
-        test_time = datetime(2024, 1, 1, hour, 0, 0)  # Fecha ficticia
-        test_time = test_time.replace(
-            weekday=day-1)  # Ajustar día de la semana
-
         # Simular el isoweekday manualmente
         class MockDateTime:
             def __init__(self, day_of_week, hour):
@@ -255,5 +282,18 @@ def debug_operating_hours():
 
         status = "✅ VÁLIDO" if result else "❌ NO VÁLIDO"
         print(f"{description}: {status}")
+
+    print("\n=== Validaciones de días lógicos de negocio ===")
+    for day, hour, description in test_cases:
+        mock_dt = MockDateTime(day, hour)
+        logical_day = get_logical_business_day(mock_dt)
+        logical_day_name = DAY_NAMES[logical_day]
+        actual_day_name = DAY_NAMES[day]
+
+        if logical_day != day:
+            print(
+                f"{description}: Día lógico = {logical_day_name} (real: {actual_day_name}) ⚠️")
+        else:
+            print(f"{description}: Día lógico = {logical_day_name} ✅")
 
     print("=== Fin verificación ===")
