@@ -167,10 +167,26 @@ def execute_fetch():
             app=APPS['EXECUTION']
         )
         dia_seleccionado = get_logical_business_day(guayaquil_time)
+        
+        # Calcular la semana basada en el tiempo de Guayaquil y el día lógico
+        # Si el día lógico es diferente al día real, usar la fecha del día lógico para calcular la semana
+        logical_date = guayaquil_time.date()
+        if dia_seleccionado != guayaquil_time.isoweekday():
+            # Si estamos en un día lógico diferente (ej: domingo 01:00 = sábado lógico)
+            # Restar un día para obtener la fecha del día lógico
+            logical_date = logical_date - timedelta(days=1)
+        
+        logical_week = logical_date.isocalendar()[1]
+        logical_year = logical_date.year
+        
         report_service.send_report_by_email(
-            dia_seleccionado=dia_seleccionado)
+            dia_seleccionado=dia_seleccionado,
+            end_week=logical_week,
+            year=logical_year)
         report_service.send_report_by_whatsapp(
-            dia_seleccionado=dia_seleccionado)
+            dia_seleccionado=dia_seleccionado,
+            end_week=logical_week,
+            year=logical_year)
     except Exception as e:
         print(f"Error al ejecutar el comando: {e}")
         raise e
@@ -228,10 +244,26 @@ def execute_fetch_simple():
             app=APPS['EXECUTION']
         )
         dia_seleccionado = get_logical_business_day(guayaquil_time)
+        
+        # Calcular la semana basada en el tiempo de Guayaquil y el día lógico
+        # Si el día lógico es diferente al día real, usar la fecha del día lógico para calcular la semana
+        logical_date = guayaquil_time.date()
+        if dia_seleccionado != guayaquil_time.isoweekday():
+            # Si estamos en un día lógico diferente (ej: domingo 01:00 = sábado lógico)
+            # Restar un día para obtener la fecha del día lógico
+            logical_date = logical_date - timedelta(days=1)
+        
+        logical_week = logical_date.isocalendar()[1]
+        logical_year = logical_date.year
+        
         report_service.send_report_by_email(
-            dia_seleccionado=dia_seleccionado)
+            dia_seleccionado=dia_seleccionado,
+            end_week=logical_week,
+            year=logical_year)
         report_service.send_report_by_whatsapp(
-            dia_seleccionado=dia_seleccionado)
+            dia_seleccionado=dia_seleccionado,
+            end_week=logical_week,
+            year=logical_year)
     except Exception as e:
         print(f"Error al ejecutar el comando: {e}")
         raise e
@@ -257,6 +289,8 @@ def debug_operating_hours():
         (7, 3, "Domingo 03:00 - fuera de horario"),
         # Domingo 08:00 - debería ser válido (inicio del domingo)
         (7, 8, "Domingo 08:00 - inicio domingo"),
+        # Domingo 20:00 - debería ser válido (horario normal domingo)
+        (7, 20, "Domingo 20:00 - horario normal domingo"),
     ]
 
     print("=== DEBUG: Verificación de horarios de operación ===")
@@ -295,5 +329,48 @@ def debug_operating_hours():
                 f"{description}: Día lógico = {logical_day_name} (real: {actual_day_name}) ⚠️")
         else:
             print(f"{description}: Día lógico = {logical_day_name} ✅")
+
+    print("\n=== Validaciones de semanas lógicas ===")
+    # Simulemos fechas específicas para ver el manejo de semanas
+    from datetime import date
+    
+    # Ejemplo: Domingo 27 de julio 2025 (semana 30)
+    # Si es domingo 01:00, lógicamente es sábado 26 de julio (semana 30)
+    test_dates = [
+        (date(2025, 7, 26), 20, "Sábado 26 jul 20:00 - normal"),  # Semana 30
+        (date(2025, 7, 27), 1, "Domingo 27 jul 01:00 - lógico sábado"),   # Debería usar semana 30
+        (date(2025, 7, 27), 8, "Domingo 27 jul 08:00 - normal"),  # Semana 30
+        (date(2025, 7, 27), 20, "Domingo 27 jul 20:00 - normal"), # Semana 30
+    ]
+    
+    for test_date, hour, description in test_dates:
+        class MockDatetime:
+            def __init__(self, date_obj, hour):
+                self.date_obj = date_obj
+                self.hour = hour
+                
+            def date(self):
+                return self.date_obj
+                
+            def isoweekday(self):
+                return self.date_obj.isoweekday()
+        
+        mock_dt = MockDatetime(test_date, hour)
+        dia_seleccionado = get_logical_business_day(mock_dt)
+        
+        # Calcular fecha y semana lógica
+        logical_date = test_date
+        if dia_seleccionado != test_date.isoweekday():
+            # Si estamos en un día lógico diferente (ej: domingo 01:00 = sábado lógico)
+            # Restar un día para obtener la fecha del día lógico
+            logical_date = logical_date - timedelta(days=1)
+        
+        logical_week = logical_date.isocalendar()[1]
+        real_week = test_date.isocalendar()[1]
+        
+        if logical_week != real_week:
+            print(f"{description}: Semana lógica = {logical_week} (real: {real_week}) ⚠️")
+        else:
+            print(f"{description}: Semana lógica = {logical_week} ✅")
 
     print("=== Fin verificación ===")
