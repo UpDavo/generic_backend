@@ -2,7 +2,7 @@ from django.urls import path
 from authentication.views.auth_api import LoginView, RegisterView, LogoutView, CustomTokenRefreshView
 from authentication.views.user_api import UserDetailUpdateView, UserListCreateView, UserListAllView, UserRetrieveUpdateDestroyView
 from authentication.views.role_api import RoleListCreateView, RoleDetailView, RoleListAllView
-from authentication.views.permission_api import PermissionListCreateView, PermissionDetailView
+from authentication.views.permission_api import PermissionListCreateView, PermissionDetailView, PermissionListAllView
 
 urlpatterns = [
     # Auth
@@ -19,6 +19,8 @@ urlpatterns = [
     # Permissions
     path("permissions/", PermissionListCreateView.as_view(),
          name="list-create-permissions"),
+    path("permissions-all/", PermissionListAllView.as_view(),
+         name="list-permissions-all"),
     path("permissions/<int:pk>/", PermissionDetailView.as_view(),
          name="detail-permission"),
 

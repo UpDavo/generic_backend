@@ -4,10 +4,10 @@ from core.models import BaseModel
 
 
 class EmailNotificationType(BaseModel):
-    SIMPLE_NOTIFICATION = 1
+    TRAFFIC_REPORT = 1
 
     TYPE_CHOICES = (
-        (SIMPLE_NOTIFICATION, 'Notificación sencilla'),
+        (TRAFFIC_REPORT, 'Informe de tráfico'),
     )
 
     notification_type = models.PositiveSmallIntegerField(

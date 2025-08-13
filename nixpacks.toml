@@ -1,0 +1,17 @@
+[phases.setup]
+aptPkgs = [
+    # wkhtmltopdf incluye wkhtmltoimage automáticamente
+    "wkhtmltopdf",
+    
+    # Solo las dependencias esenciales para entornos headless
+    "libxrender1",     # Renderizado X11 (esencial)
+    "libxext6",        # Extensiones X11 (esencial)
+    "libfontconfig1",  # Configuración de fuentes (esencial)
+    
+    # Virtual framebuffer para entornos sin display (esencial)
+    "xvfb"
+]
+
+# Variables de entorno para wkhtmltopdf
+[variables]
+DISPLAY = ":99"

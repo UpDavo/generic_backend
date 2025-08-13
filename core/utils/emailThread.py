@@ -26,9 +26,15 @@ class EmailThread(threading.Thread):
 
     def run(self):
         try:
-            email_html = render_to_string(self.template, {
-                'email_data': self.email_data
-            })
+            # Si email_data es un diccionario, desempaquetamos sus claves
+            if isinstance(self.email_data, dict):
+                context = self.email_data.copy()
+                # Mantener la referencia original también
+                context['email_data'] = self.email_data
+            else:
+                context = {'email_data': self.email_data}
+
+            email_html = render_to_string(self.template, context)
 
             email = EmailMultiAlternatives(
                 subject=self.subject,
@@ -44,7 +50,7 @@ class EmailThread(threading.Thread):
                     email.attach(
                         attachment['filename'], attachment['file'])
 
-            print(f"Enviando correo a: {self.recipient_list}")
+            # print(f"Enviando correo a: {self.recipient_list}")
             email.send()
             print("Correo enviado exitosamente.")
 

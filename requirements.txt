@@ -7,6 +7,7 @@ psycopg2-binary==2.9.10
 python-decouple==3.8
 pandas==2.2.3
 boto3==1.36.16
+django-storages
 requests==2.32.3
 cryptography==44.0.0
 PyJWT==2.10.1
@@ -14,3 +15,7 @@ gunicorn==23.0.0
 transformers==4.48.3
 torch
 openpyxl
+pytz
+pdfkit==1.0.0
+imgkit==1.2.3
+wkhtmltopdf

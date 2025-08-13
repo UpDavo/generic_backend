@@ -1,7 +1,15 @@
-from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView
+from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView, ListAPIView
 from rest_framework.permissions import IsAuthenticated
 from authentication.models import Permission
 from authentication.serializers import PermissionSerializer
+
+
+class PermissionListAllView(ListAPIView):
+    """Listar todos los permisos sin paginación"""
+    queryset = Permission.objects.filter(deleted_at__isnull=True)
+    serializer_class = PermissionSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = None
 
 
 class PermissionListCreateView(ListCreateAPIView):
