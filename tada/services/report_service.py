@@ -852,7 +852,8 @@ class ReportService:
                     image_url = None
 
                 # Crear mensaje según disponibilidad de imagen
-                if image_url:
+                # if image_url:
+                if False:
                     # Mensaje corto cuando hay imagen válida
                     message_text = f"📊 Corte {dia_nombre}"
                     if ultima_hora_hoy:
@@ -877,10 +878,10 @@ class ReportService:
                         message_text += f"\nReal: {daily_meta_vs_real.get('real_count', 0)} | Meta: {daily_meta_vs_real.get('meta_count', 0)}"
 
                     # Agregar nota sobre imagen basada en la URL ya generada
-                    if 'localhost' in str(image_url or ''):
-                        message_text += "\n\n⚠️ Imagen no disponible."
-                    else:
-                        message_text += "\n\n⚠️ Imagen falló en generar."
+                    # if 'localhost' in str(image_url or ''):
+                    #     message_text += "\n\n⚠️ Imagen no disponible."
+                    # else:
+                    #     message_text += "\n\n⚠️ Imagen falló en generar."
 
             # Obtener números de teléfono para envío
             phone_numbers = EmailNotification.get_numbers_by_type_constant(
