@@ -67,6 +67,8 @@ urlpatterns = [
          name='traffic-logs-stats'),
     path('execution-logs/stats/', ExecutionLogsStatsView.as_view(),
          name='execution-logs-stats'),
+    path('webhook-logs/stats/', WebhookLogsStatsView.as_view(),
+         name='webhook-logs-stats'),
     path('logs/combined-stats/', CombinedLogsStatsView.as_view(),
          name='combined-logs-stats'),
 
@@ -114,4 +116,10 @@ urlpatterns = [
     path('reports/fetch-data/', ReportFetchView.as_view(),
          name='report-fetch-data'),
 
+    # Webhook (receiver and stats)
+    path('webhook/cancelled/', WebhookReceiverCancelledView.as_view(),
+         name='webhook-cancelled'),
+    path('webhook/cancelled/download/', WebhookCancelledDownloadView.as_view(),
+         name='webhook-cancelled-download'),
+    
 ]

@@ -56,3 +56,5 @@ dist/
 *.key
 
 *.txt
+
+venv2/

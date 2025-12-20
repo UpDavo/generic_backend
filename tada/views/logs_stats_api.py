@@ -6,7 +6,7 @@ from django.db.models import Count, Q
 from decimal import Decimal
 from datetime import datetime
 from django.utils.dateparse import parse_datetime
-from tada.models import NotificationLog, CanvasLog, TrafficLog, ExecutionLog, AppPrice, Price
+from tada.models import NotificationLog, CanvasLog, TrafficLog, ExecutionLog, WebhookLog, AppPrice, Price
 from tada.utils.constants import APPS, APP_NAMES
 from authentication.models import CustomUser
 
@@ -505,6 +505,10 @@ class CombinedLogsStatsView(APIView):
         canvas_stats = CanvasLogsStatsView().get(request).data
         traffic_stats = TrafficLogsStatsView().get(request).data
         execution_stats = ExecutionLogsStatsView().get(request).data
+        
+        # Importar la vista de webhook stats
+        from tada.views.webhook_api import WebhookLogsStatsView
+        webhook_stats = WebhookLogsStatsView().get(request).data
 
         # Combinar estadísticas por usuario (solo Push y Canvas)
         all_users = {}
@@ -581,6 +585,7 @@ class CombinedLogsStatsView(APIView):
             'canvas_logs_summary': canvas_stats,
             'traffic_logs_summary': traffic_stats,
             'execution_logs_summary': execution_stats,
+            'webhook_logs_summary': webhook_stats,
             'combined_users_stats': users_combined_stats,
             'grand_total': {
                 'total_users': len(all_users),
@@ -588,12 +593,13 @@ class CombinedLogsStatsView(APIView):
                 'total_canvas_logs': canvas_stats['summary']['total_logs'],
                 'total_traffic_logs': traffic_stats['summary']['total_logs'],
                 'total_execution_logs': execution_stats['summary']['total_logs'],
+                'total_webhook_logs': webhook_stats['summary']['total_logs'],
                 'total_user_logs': notification_stats['summary']['total_logs'] + canvas_stats['summary']['total_logs'],
-                'total_general_logs': traffic_stats['summary']['total_logs'] + execution_stats['summary']['total_logs'],
-                'total_combined_logs': notification_stats['summary']['total_logs'] + canvas_stats['summary']['total_logs'] + traffic_stats['summary']['total_logs'] + execution_stats['summary']['total_logs'],
+                'total_general_logs': traffic_stats['summary']['total_logs'] + execution_stats['summary']['total_logs'] + webhook_stats['summary']['total_logs'],
+                'total_combined_logs': notification_stats['summary']['total_logs'] + canvas_stats['summary']['total_logs'] + traffic_stats['summary']['total_logs'] + execution_stats['summary']['total_logs'] + webhook_stats['summary']['total_logs'],
                 'total_user_cost': str(Decimal(notification_stats['summary']['total_cost']) + Decimal(canvas_stats['summary']['total_cost'])),
-                'total_general_cost': str(Decimal(traffic_stats['summary']['total_cost']) + Decimal(execution_stats['summary']['total_cost'])),
-                'total_combined_cost': str(Decimal(notification_stats['summary']['total_cost']) + Decimal(canvas_stats['summary']['total_cost']) + Decimal(traffic_stats['summary']['total_cost']) + Decimal(execution_stats['summary']['total_cost']))
+                'total_general_cost': str(Decimal(traffic_stats['summary']['total_cost']) + Decimal(execution_stats['summary']['total_cost']) + Decimal(webhook_stats['summary']['total_cost'])),
+                'total_combined_cost': str(Decimal(notification_stats['summary']['total_cost']) + Decimal(canvas_stats['summary']['total_cost']) + Decimal(traffic_stats['summary']['total_cost']) + Decimal(execution_stats['summary']['total_cost']) + Decimal(webhook_stats['summary']['total_cost']))
             }
         }, status=status.HTTP_200_OK)
 
