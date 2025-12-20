@@ -179,10 +179,10 @@ def execute_fetch():
         logical_week = logical_date.isocalendar()[1]
         logical_year = logical_date.year
         
-        report_service.send_report_by_email(
-            dia_seleccionado=dia_seleccionado,
-            end_week=logical_week,
-            year=logical_year)
+        # report_service.send_report_by_email(
+        #     dia_seleccionado=dia_seleccionado,
+        #     end_week=logical_week,
+        #     year=logical_year)
         report_service.send_report_by_whatsapp(
             dia_seleccionado=dia_seleccionado,
             end_week=logical_week,

@@ -5,9 +5,11 @@ from core.models import BaseModel
 
 class EmailNotificationType(BaseModel):
     TRAFFIC_REPORT = 1
+    CANCELLED_WEBHOOK = 2
 
     TYPE_CHOICES = (
         (TRAFFIC_REPORT, 'Informe de tráfico'),
+        (CANCELLED_WEBHOOK, 'Webhook cancelado'),
     )
 
     notification_type = models.PositiveSmallIntegerField(

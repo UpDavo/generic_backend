@@ -13,11 +13,14 @@ from django.utils.timezone import now
 from tada.models.webhookLog import WebhookLog
 from tada.models import AppPrice, Price
 from tada.utils.constants import APPS, APP_NAMES
+from core.services.whatsapp_service import WhatsAppService
+from core.models import EmailNotification, EmailNotificationType
+from tada.utils.encryption import EncryptionService
 
 
 class WebhookReceiverCancelledView(APIView):
     """Vista para recibir webhooks de servicios externos"""
-    
+
     def get_permissions(self):
         """GET requiere autenticación, POST no"""
         if self.request.method == 'GET':
@@ -27,7 +30,7 @@ class WebhookReceiverCancelledView(APIView):
     def get(self, request):
         """
         Obtiene la lista de webhooks cancelados.
-        
+
         Query params opcionales:
         - email: Filtrar por email específico
         - start_date: Fecha inicial (YYYY-MM-DD)
@@ -40,16 +43,16 @@ class WebhookReceiverCancelledView(APIView):
             start_date = request.query_params.get('start_date')
             end_date = request.query_params.get('end_date')
             source = request.query_params.get('source')
-            
+
             # Construir query base
             queryset = WebhookLog.objects.filter(
                 deleted_at__isnull=True
             ).order_by('-created_at')
-            
+
             # Aplicar filtros
             if email:
                 queryset = queryset.filter(payload__email=email)
-            
+
             if start_date:
                 try:
                     start_dt = parse_datetime(start_date)
@@ -58,7 +61,7 @@ class WebhookReceiverCancelledView(APIView):
                     queryset = queryset.filter(date__gte=start_dt.date())
                 except (ValueError, TypeError):
                     pass
-            
+
             if end_date:
                 try:
                     end_dt = parse_datetime(end_date)
@@ -67,25 +70,30 @@ class WebhookReceiverCancelledView(APIView):
                     queryset = queryset.filter(date__lte=end_dt.date())
                 except (ValueError, TypeError):
                     pass
-            
+
             if source:
                 queryset = queryset.filter(source=source)
-            
+
             # Serializar resultados
             results = []
             for log in queryset:
+                # Desencriptar payload
+                decrypted_payload = EncryptionService.decrypt_data(log.payload)
+                if decrypted_payload is None:
+                    decrypted_payload = log.payload  # Fallback si falla la desencriptación
+                
                 results.append({
                     'id': log.id,
-                    'name': log.payload.get('name', 'N/A'),
-                    'email': log.payload.get('email', 'N/A'),
+                    'name': decrypted_payload.get('name', 'N/A'),
+                    'email': decrypted_payload.get('email', 'N/A'),
                     'source': log.source,
                     'event_type': log.event_type,
                     'date': log.date.strftime('%Y-%m-%d'),
                     'time': log.time.strftime('%H:%M:%S'),
-                    'payload': log.payload,
+                    'payload': decrypted_payload,
                     'created_at': log.created_at.isoformat() if hasattr(log, 'created_at') else None
                 })
-            
+
             return Response({
                 'count': len(results),
                 'filters': {
@@ -96,7 +104,7 @@ class WebhookReceiverCancelledView(APIView):
                 },
                 'results': results
             }, status=status.HTTP_200_OK)
-            
+
         except Exception as e:
             print(f"❌ Error obteniendo webhooks: {str(e)}")
             return Response({
@@ -107,7 +115,7 @@ class WebhookReceiverCancelledView(APIView):
     def post(self, request):
         """
         Recibe el webhook y crea un log.
-        
+
         Ejemplo de payload esperado:
         {
             "name": "Nombre",
@@ -116,38 +124,93 @@ class WebhookReceiverCancelledView(APIView):
         """
         try:
             payload = request.data
-            
+
             # Extraer información del payload
             source = payload.get('source', 'cancelled_orders')
             event_type = payload.get('event_type', 'order_cancelled')
             name = payload.get('name', 'unknown')
             email = payload.get('email', 'unknown')
             
-            # Crear el log del webhook
+            # Ofuscar email para mostrar parcialmente (ej: j***@gmail.com)
+            masked_email = email
+            if email and '@' in email:
+                local, domain = email.split('@', 1)
+                if len(local) > 2:
+                    masked_email = f"{local[0]}{'*' * (len(local) - 1)}@{domain}"
+                elif len(local) == 2:
+                    masked_email = f"{local[0]}*@{domain}"
+                else:
+                    masked_email = f"*@{domain}"
+
+            # Encriptar el payload antes de guardarlo
+            encrypted_payload = EncryptionService.encrypt_data(payload)
+            if encrypted_payload is None:
+                # Si falla la encriptación, usar el payload original
+                encrypted_payload = payload
+                print("⚠️ No se pudo encriptar el payload, guardando sin encriptar")
+
+            # Crear el log del webhook con payload encriptado
             webhook_log = WebhookLog.objects.create(
-                payload=payload,
+                payload=encrypted_payload,
                 source=source,
                 event_type=event_type,
                 date=now().date(),
                 time=now().time(),
                 app=str(APPS['WEBHOOK'])
             )
-            
-            # Print para debugging (como solicitaste)
-            print(f"🔔 Webhook de cancelación recibido:")
-            print(f"   Name: {name}")
-            print(f"   Email: {email}")
-            print(f"   Source: {source}")
-            print(f"   Event Type: {event_type}")
-            print(f"   Log ID: {webhook_log.id}")
-            
+
+            # Enviar notificación por WhatsApp
+            try:
+                whatsapp_service = WhatsAppService()
+
+                # Obtener números de teléfono configurados para CANCELLED_WEBHOOK
+                phone_numbers = EmailNotification.get_numbers_by_type_constant(
+                    notification_type_constant=EmailNotificationType.CANCELLED_WEBHOOK
+                )
+                phone_numbers = list(phone_numbers)
+
+                # Si no hay números configurados, usar número por defecto
+                if not phone_numbers:
+                    phone_numbers = ['+593994504722']
+                    print(
+                        "No hay números configurados para CANCELLED_WEBHOOK, usando número por defecto")
+
+                # Crear mensaje de WhatsApp
+                message_text = f"*Nuevo pedido cancelado de:*\n\n{name}\n"
+                message_text += f"{masked_email}\n\n"
+                message_text += f"Revisar en hint:\n\n"
+                message_text += f"https://hint.heimdal.ec/dashboard/webhooks"
+
+                # Enviar mensaje a cada número configurado
+                for phone_number in phone_numbers:
+                    try:
+                        response_data, response = whatsapp_service.send_message(
+                            to=phone_number,
+                            text=message_text
+                        )
+
+                        if response.status_code == 200:
+                            print(
+                                f"✅ Notificación WhatsApp enviada a {phone_number}")
+                        else:
+                            print(
+                                f"❌ Error al enviar WhatsApp a {phone_number}: {response_data}")
+                    except Exception as phone_error:
+                        print(
+                            f"⚠️ Error al enviar a {phone_number}: {str(phone_error)}")
+
+            except Exception as whatsapp_error:
+                print(
+                    f"⚠️ Error al enviar notificación WhatsApp: {str(whatsapp_error)}")
+                # No fallar el webhook si WhatsApp falla
+
             return Response({
                 "message": "Webhook recibido exitosamente",
                 "log_id": webhook_log.id,
                 "name": name,
                 "email": email
             }, status=status.HTTP_201_CREATED)
-            
+
         except Exception as e:
             print(f"❌ Error procesando webhook: {str(e)}")
             return Response({
@@ -238,7 +301,7 @@ class WebhookLogsStatsView(APIView):
         # Filtros adicionales
         if source:
             date_filters &= Q(source=source)
-        
+
         if event_type:
             date_filters &= Q(event_type=event_type)
 
@@ -310,16 +373,16 @@ class WebhookCancelledDownloadView(APIView):
         start_date = request.query_params.get('start_date')
         end_date = request.query_params.get('end_date')
         source = request.query_params.get('source')
-        
+
         # Construir query base
         queryset = WebhookLog.objects.filter(
             deleted_at__isnull=True
         ).order_by('-created_at')
-        
+
         # Aplicar filtros
         if email:
             queryset = queryset.filter(payload__email=email)
-        
+
         if start_date:
             try:
                 start_dt = parse_datetime(start_date)
@@ -328,7 +391,7 @@ class WebhookCancelledDownloadView(APIView):
                 queryset = queryset.filter(date__gte=start_dt.date())
             except (ValueError, TypeError):
                 pass
-        
+
         if end_date:
             try:
                 end_dt = parse_datetime(end_date)
@@ -337,7 +400,7 @@ class WebhookCancelledDownloadView(APIView):
                 queryset = queryset.filter(date__lte=end_dt.date())
             except (ValueError, TypeError):
                 pass
-        
+
         if source:
             queryset = queryset.filter(source=source)
 
@@ -347,16 +410,21 @@ class WebhookCancelledDownloadView(APIView):
         ws.title = "Webhooks Cancelados"
 
         # Cabeceras
-        headers = ["ID", "Nombre", "Email", "Source", 
+        headers = ["ID", "Nombre", "Email", "Source",
                    "Tipo de Evento", "Fecha", "Hora"]
         ws.append(headers)
 
         # Contenido
         for log in queryset:
+            # Desencriptar payload
+            decrypted_payload = EncryptionService.decrypt_data(log.payload)
+            if decrypted_payload is None:
+                decrypted_payload = log.payload  # Fallback si falla la desencriptación
+            
             ws.append([
                 log.id,
-                log.payload.get('name', 'N/A'),
-                log.payload.get('email', 'N/A'),
+                decrypted_payload.get('name', 'N/A'),
+                decrypted_payload.get('email', 'N/A'),
                 log.source,
                 log.event_type,
                 log.date.strftime("%Y-%m-%d") if log.date else "",

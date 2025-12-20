@@ -223,14 +223,14 @@ class ReportEmailView(APIView):
             report_service = ReportService()
 
             # Enviar el reporte con todos los parámetros
-            report_service.send_report_by_email(
-                dia_seleccionado=dia,
-                start_week=start_week,
-                end_week=end_week,
-                year=year,
-                start_hour=start_hour,
-                end_hour=end_hour
-            )
+            # report_service.send_report_by_email(
+            #     dia_seleccionado=dia,
+            #     start_week=start_week,
+            #     end_week=end_week,
+            #     year=year,
+            #     start_hour=start_hour,
+            #     end_hour=end_hour
+            # )
 
             # Enviar el reporte por WhatsApp
             report_service.send_report_by_whatsapp(
