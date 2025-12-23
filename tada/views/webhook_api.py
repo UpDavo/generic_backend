@@ -5,11 +5,13 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.pagination import PageNumberPagination
 from django.db.models import Count, Q
 from decimal import Decimal
 from datetime import datetime
 from django.utils.dateparse import parse_datetime
 from django.utils.timezone import now
+import pytz
 from tada.models.webhookLog import WebhookLog
 from tada.models import AppPrice, Price
 from tada.utils.constants import APPS, APP_NAMES
@@ -20,6 +22,7 @@ from tada.utils.encryption import EncryptionService
 
 class WebhookReceiverCancelledView(APIView):
     """Vista para recibir webhooks de servicios externos"""
+    pagination_class = PageNumberPagination
 
     def get_permissions(self):
         """GET requiere autenticación, POST no"""
@@ -29,13 +32,15 @@ class WebhookReceiverCancelledView(APIView):
 
     def get(self, request):
         """
-        Obtiene la lista de webhooks cancelados.
+        Obtiene la lista de webhooks cancelados con paginación.
 
         Query params opcionales:
         - email: Filtrar por email específico
         - start_date: Fecha inicial (YYYY-MM-DD)
         - end_date: Fecha final (YYYY-MM-DD)
         - source: Filtrar por source
+        - page: Número de página (por defecto: 1)
+        - page_size: Tamaño de página (por defecto: 10)
         """
         try:
             # Obtener parámetros de filtro
@@ -74,13 +79,33 @@ class WebhookReceiverCancelledView(APIView):
             if source:
                 queryset = queryset.filter(source=source)
 
+            # Aplicar paginación
+            paginator = self.pagination_class()
+            paginated_queryset = paginator.paginate_queryset(queryset, request)
+
             # Serializar resultados
+            guayaquil_tz = pytz.timezone('America/Guayaquil')
             results = []
-            for log in queryset:
+            for log in paginated_queryset:
                 # Desencriptar payload
                 decrypted_payload = EncryptionService.decrypt_data(log.payload)
                 if decrypted_payload is None:
                     decrypted_payload = log.payload  # Fallback si falla la desencriptación
+                
+                # Convertir created_at a hora de Guayaquil si existe
+                created_at_gye = None
+                if hasattr(log, 'created_at') and log.created_at:
+                    created_at_gye = log.created_at.astimezone(guayaquil_tz).isoformat()
+                
+                # Convertir edited_at a hora de Guayaquil si existe
+                edited_at_gye = None
+                if log.edited_at:
+                    edited_at_gye = log.edited_at.astimezone(guayaquil_tz).isoformat()
+                
+                # Obtener nombre del usuario que editó
+                edited_by_name = None
+                if log.edited_by:
+                    edited_by_name = f"{log.edited_by.first_name} {log.edited_by.last_name}".strip() or log.edited_by.email
                 
                 results.append({
                     'id': log.id,
@@ -91,26 +116,18 @@ class WebhookReceiverCancelledView(APIView):
                     'date': log.date.strftime('%Y-%m-%d'),
                     'time': log.time.strftime('%H:%M:%S'),
                     'payload': decrypted_payload,
-                    'created_at': log.created_at.isoformat() if hasattr(log, 'created_at') else None,
+                    'created_at': created_at_gye,
                     # Campos adicionales de edición
                     'poc': log.poc,
                     'comment': log.comment,
                     'repurchased': log.repurchased,
                     'is_edited': log.is_edited,
-                    'edited_by': log.edited_by.name if log.edited_by else None,
-                    'edited_at': log.edited_at.isoformat() if log.edited_at else None
+                    'edited_by': edited_by_name,
+                    'edited_at': edited_at_gye
                 })
 
-            return Response({
-                'count': len(results),
-                'filters': {
-                    'email': email,
-                    'start_date': start_date,
-                    'end_date': end_date,
-                    'source': source
-                },
-                'results': results
-            }, status=status.HTTP_200_OK)
+            # Retornar respuesta paginada
+            return paginator.get_paginated_response(results)
 
         except Exception as e:
             print(f"❌ Error obteniendo webhooks: {str(e)}")
@@ -507,6 +524,12 @@ class WebhookCancelledUpdateView(APIView):
             if decrypted_payload is None:
                 decrypted_payload = webhook.payload
             
+            # Convertir edited_at a hora de Guayaquil
+            guayaquil_tz = pytz.timezone('America/Guayaquil')
+            edited_at_gye = None
+            if webhook.edited_at:
+                edited_at_gye = webhook.edited_at.astimezone(guayaquil_tz).isoformat()
+            
             return Response({
                 "message": "Webhook actualizado exitosamente",
                 "webhook": {
@@ -522,7 +545,7 @@ class WebhookCancelledUpdateView(APIView):
                     "repurchased": webhook.repurchased,
                     "is_edited": webhook.is_edited,
                     "edited_by": webhook.edited_by.email if webhook.edited_by else None,
-                    "edited_at": webhook.edited_at.isoformat() if webhook.edited_at else None
+                    "edited_at": edited_at_gye
                 }
             }, status=status.HTTP_200_OK)
             

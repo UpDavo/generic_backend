@@ -63,26 +63,32 @@ class UsersByRoleView(APIView):
             Lista de usuarios con ese rol
         """
         try:
-            # Filtrar usuarios por rol (case-insensitive)
+            # Filtrar usuarios por rol (case-insensitive) y activos
             users = CustomUser.objects.filter(
                 role__name__iexact=role_name,
-                deleted_at__isnull=True
+                is_active=True
             ).select_related('role').order_by('email')
             
             # Serializar resultados
             results = []
             for user in users:
+                # Usar first_name y last_name del AbstractUser
+                full_name = f"{user.first_name} {user.last_name}".strip() or user.email
+                
                 results.append({
                     'id': user.id,
                     'email': user.email,
-                    'name': user.name,
+                    'name': full_name,
+                    'first_name': user.first_name,
+                    'last_name': user.last_name,
+                    'phone_number': user.phone_number,
                     'role': {
                         'id': user.role.id if user.role else None,
                         'name': user.role.name if user.role else None,
                         'is_admin': user.role.is_admin if user.role else False
                     },
                     'is_active': user.is_active,
-                    'created_at': user.created_at.isoformat() if hasattr(user, 'created_at') else None
+                    'date_joined': user.date_joined.isoformat() if hasattr(user, 'date_joined') else None
                 })
             
             return Response({
