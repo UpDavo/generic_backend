@@ -435,8 +435,12 @@ class WebhookCancelledDownloadView(APIView):
 
         # Cabeceras
         headers = ["ID", "Nombre", "Email", "Source",
-                   "Tipo de Evento", "Fecha", "Hora"]
+                   "Tipo de Evento", "Fecha", "Hora", "POC", "Comentario", 
+                   "Recompró", "Editado Por", "Fecha Edición"]
         ws.append(headers)
+
+        # Configurar zona horaria de Guayaquil
+        guayaquil_tz = pytz.timezone('America/Guayaquil')
 
         # Contenido
         for log in queryset:
@@ -444,6 +448,17 @@ class WebhookCancelledDownloadView(APIView):
             decrypted_payload = EncryptionService.decrypt_data(log.payload)
             if decrypted_payload is None:
                 decrypted_payload = log.payload  # Fallback si falla la desencriptación
+            
+            # Obtener nombre del usuario que editó
+            edited_by_name = ""
+            if log.edited_by:
+                edited_by_name = f"{log.edited_by.first_name} {log.edited_by.last_name}".strip() or log.edited_by.email
+            
+            # Convertir edited_at a hora de Guayaquil
+            edited_at_str = ""
+            if log.edited_at:
+                edited_at_gye = log.edited_at.astimezone(guayaquil_tz)
+                edited_at_str = edited_at_gye.strftime("%Y-%m-%d %H:%M:%S")
             
             ws.append([
                 log.id,
@@ -453,6 +468,11 @@ class WebhookCancelledDownloadView(APIView):
                 log.event_type,
                 log.date.strftime("%Y-%m-%d") if log.date else "",
                 log.time.strftime("%H:%M:%S") if log.time else "",
+                log.poc or "",
+                log.comment or "",
+                "Sí" if log.repurchased else "No",
+                edited_by_name,
+                edited_at_str
             ])
 
         # Preparar archivo
