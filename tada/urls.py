@@ -119,6 +119,8 @@ urlpatterns = [
     # Webhook (receiver and stats)
     path('webhook/cancelled/', WebhookReceiverCancelledView.as_view(),
          name='webhook-cancelled'),
+    path('webhook/cancelled/<int:pk>/update/', WebhookCancelledUpdateView.as_view(),
+         name='webhook-cancelled-update'),
     path('webhook/cancelled/download/', WebhookCancelledDownloadView.as_view(),
          name='webhook-cancelled-download'),
     

@@ -46,3 +46,53 @@ class UserListAllView(ListAPIView):
     serializer_class = UserSerializer
     permission_classes = [IsAuthenticated]
     pagination_class = None
+
+
+class UsersByRoleView(APIView):
+    """Obtener usuarios filtrados por rol"""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, role_name):
+        """
+        Obtiene la lista de usuarios que tienen un rol específico.
+        
+        Args:
+            role_name: Nombre del rol a filtrar (ej: 'Store')
+        
+        Returns:
+            Lista de usuarios con ese rol
+        """
+        try:
+            # Filtrar usuarios por rol (case-insensitive)
+            users = CustomUser.objects.filter(
+                role__name__iexact=role_name,
+                deleted_at__isnull=True
+            ).select_related('role').order_by('email')
+            
+            # Serializar resultados
+            results = []
+            for user in users:
+                results.append({
+                    'id': user.id,
+                    'email': user.email,
+                    'name': user.name,
+                    'role': {
+                        'id': user.role.id if user.role else None,
+                        'name': user.role.name if user.role else None,
+                        'is_admin': user.role.is_admin if user.role else False
+                    },
+                    'is_active': user.is_active,
+                    'created_at': user.created_at.isoformat() if hasattr(user, 'created_at') else None
+                })
+            
+            return Response({
+                'role_name': role_name,
+                'count': len(results),
+                'users': results
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response({
+                'error': 'Error obteniendo usuarios por rol',
+                'details': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

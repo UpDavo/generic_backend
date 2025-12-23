@@ -91,7 +91,14 @@ class WebhookReceiverCancelledView(APIView):
                     'date': log.date.strftime('%Y-%m-%d'),
                     'time': log.time.strftime('%H:%M:%S'),
                     'payload': decrypted_payload,
-                    'created_at': log.created_at.isoformat() if hasattr(log, 'created_at') else None
+                    'created_at': log.created_at.isoformat() if hasattr(log, 'created_at') else None,
+                    # Campos adicionales de edición
+                    'poc': log.poc,
+                    'comment': log.comment,
+                    'repurchased': log.repurchased,
+                    'is_edited': log.is_edited,
+                    'edited_by': log.edited_by.name if log.edited_by else None,
+                    'edited_at': log.edited_at.isoformat() if log.edited_at else None
                 })
 
             return Response({
@@ -442,3 +449,90 @@ class WebhookCancelledDownloadView(APIView):
         )
         response['Content-Disposition'] = f'attachment; filename=webhook_cancelled_logs.xlsx'
         return response
+
+
+class WebhookCancelledUpdateView(APIView):
+    """Vista para actualizar información adicional de un webhook cancelado (solo una vez)"""
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, pk):
+        """
+        Actualiza un webhook con información adicional.
+        Solo se puede editar una vez.
+        
+        Campos editables:
+        - poc: Punto de venta de origen
+        - comment: Comentario
+        - repurchased: Booleano si volvió a comprar
+        """
+        try:
+            # Obtener el webhook
+            webhook = WebhookLog.objects.get(pk=pk, deleted_at__isnull=True)
+            
+            # Verificar si ya fue editado
+            if webhook.is_edited:
+                return Response({
+                    "error": "Este webhook ya fue editado y no se puede modificar nuevamente",
+                    "edited_by": webhook.edited_by.email if webhook.edited_by else None,
+                    "edited_at": webhook.edited_at.isoformat() if webhook.edited_at else None
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Obtener datos del request
+            poc = request.data.get('poc')
+            comment = request.data.get('comment')
+            repurchased = request.data.get('repurchased')
+            
+            # Validar que al menos un campo esté presente
+            if poc is None and comment is None and repurchased is None:
+                return Response({
+                    "error": "Debe proporcionar al menos un campo para actualizar (poc, comment, repurchased)"
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Actualizar campos
+            if poc is not None:
+                webhook.poc = poc
+            if comment is not None:
+                webhook.comment = comment
+            if repurchased is not None:
+                webhook.repurchased = repurchased
+            
+            # Marcar como editado
+            webhook.is_edited = True
+            webhook.edited_by = request.user
+            webhook.edited_at = now()
+            webhook.save()
+            
+            # Desencriptar payload para la respuesta
+            decrypted_payload = EncryptionService.decrypt_data(webhook.payload)
+            if decrypted_payload is None:
+                decrypted_payload = webhook.payload
+            
+            return Response({
+                "message": "Webhook actualizado exitosamente",
+                "webhook": {
+                    "id": webhook.id,
+                    "name": decrypted_payload.get('name', 'N/A'),
+                    "email": decrypted_payload.get('email', 'N/A'),
+                    "source": webhook.source,
+                    "event_type": webhook.event_type,
+                    "date": webhook.date.strftime('%Y-%m-%d'),
+                    "time": webhook.time.strftime('%H:%M:%S'),
+                    "poc": webhook.poc,
+                    "comment": webhook.comment,
+                    "repurchased": webhook.repurchased,
+                    "is_edited": webhook.is_edited,
+                    "edited_by": webhook.edited_by.email if webhook.edited_by else None,
+                    "edited_at": webhook.edited_at.isoformat() if webhook.edited_at else None
+                }
+            }, status=status.HTTP_200_OK)
+            
+        except WebhookLog.DoesNotExist:
+            return Response({
+                "error": "Webhook no encontrado"
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            print(f"❌ Error actualizando webhook: {str(e)}")
+            return Response({
+                "error": "Error al actualizar webhook",
+                "details": str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

@@ -1,6 +1,6 @@
 from django.urls import path
 from authentication.views.auth_api import LoginView, RegisterView, LogoutView, CustomTokenRefreshView
-from authentication.views.user_api import UserDetailUpdateView, UserListCreateView, UserListAllView, UserRetrieveUpdateDestroyView
+from authentication.views.user_api import UserDetailUpdateView, UserListCreateView, UserListAllView, UserRetrieveUpdateDestroyView, UsersByRoleView
 from authentication.views.role_api import RoleListCreateView, RoleDetailView, RoleListAllView
 from authentication.views.permission_api import PermissionListCreateView, PermissionDetailView, PermissionListAllView
 
@@ -32,4 +32,5 @@ urlpatterns = [
     # user individual
     path("user/", UserDetailUpdateView.as_view(), name="user-detail"),
     path("users/all/", UserListAllView.as_view(), name="user-list-all"),
+    path("users/role/<str:role_name>/", UsersByRoleView.as_view(), name="users-by-role"),
 ]
