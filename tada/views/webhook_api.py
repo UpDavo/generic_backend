@@ -125,6 +125,8 @@ class WebhookReceiverCancelledView(APIView):
                     'edited_by': edited_by_name,
                     'edited_at': edited_at_gye
                 })
+                
+            # print(results)
 
             # Retornar respuesta paginada
             return paginator.get_paginated_response(results)

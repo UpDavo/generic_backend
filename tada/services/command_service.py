@@ -176,8 +176,13 @@ def execute_fetch():
             # Restar un día para obtener la fecha del día lógico
             logical_date = logical_date - timedelta(days=1)
         
-        logical_week = logical_date.isocalendar()[1]
-        logical_year = logical_date.year
+        # Usar isocalendar() para obtener tanto el año ISO como la semana ISO
+        # Esto es importante porque los últimos días de diciembre pueden pertenecer a la semana 1 del año siguiente
+        iso_calendar = logical_date.isocalendar()
+        logical_year = iso_calendar[0]  # Año ISO
+        logical_week = iso_calendar[1]  # Semana ISO
+        
+        print(f"DEBUG: Fecha lógica: {logical_date}, Año ISO: {logical_year}, Semana ISO: {logical_week}")
         
         # report_service.send_report_by_email(
         #     dia_seleccionado=dia_seleccionado,
@@ -253,13 +258,18 @@ def execute_fetch_simple():
             # Restar un día para obtener la fecha del día lógico
             logical_date = logical_date - timedelta(days=1)
         
-        logical_week = logical_date.isocalendar()[1]
-        logical_year = logical_date.year
+        # Usar isocalendar() para obtener tanto el año ISO como la semana ISO
+        # Esto es importante porque los últimos días de diciembre pueden pertenecer a la semana 1 del año siguiente
+        iso_calendar = logical_date.isocalendar()
+        logical_year = iso_calendar[0]  # Año ISO
+        logical_week = iso_calendar[1]  # Semana ISO
         
-        report_service.send_report_by_email(
-            dia_seleccionado=dia_seleccionado,
-            end_week=logical_week,
-            year=logical_year)
+        print(f"DEBUG: Fecha lógica: {logical_date}, Año ISO: {logical_year}, Semana ISO: {logical_week}")
+        
+        # report_service.send_report_by_email(
+        #     dia_seleccionado=dia_seleccionado,
+        #     end_week=logical_week,
+        #     year=logical_year)
         report_service.send_report_by_whatsapp(
             dia_seleccionado=dia_seleccionado,
             end_week=logical_week,

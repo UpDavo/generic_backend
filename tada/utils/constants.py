@@ -33,7 +33,7 @@ END_WINDOW = 12
 # crosses_midnight indica si el horario continúa al día siguiente
 OPERATING_HOURS = {
     # Lunes: 12:00-23:00
-    1: {'start_hour': 12, 'end_hour': 23, 'crosses_midnight': False},
+    1: {'start_hour': 11, 'end_hour': 23, 'crosses_midnight': False},
     # Martes: 09:00-23:00
     2: {'start_hour': 9, 'end_hour': 23, 'crosses_midnight': False},
     # Miércoles: 09:00-24:00 (hasta 00:00 del día siguiente)

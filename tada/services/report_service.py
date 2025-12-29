@@ -15,7 +15,7 @@ class ReportService:
     START_WINDOW_MINUTE = START_WINDOW  # Importado desde constants
     END_WINDOW_MINUTE = END_WINDOW      # Importado desde constants
 
-    def get_datetime_variation(self, dia, start_week=None, end_week=None, year=None, start_hour=None, end_hour=None):
+    def get_datetime_variation(self, dia, start_week=None, end_week=None, year=None, start_year=None, end_year=None, start_hour=None, end_hour=None):
         """
         Obtiene la variación de tráfico por hora durante un rango de semanas para un día específico.
 
@@ -29,7 +29,9 @@ class ReportService:
             dia (int): Día de la semana (1=Lunes, 2=Martes, 3=Miércoles, 4=Jueves, 5=Viernes, 6=Sábado, 7=Domingo)
             start_week (int): Número de semana de inicio (opcional, default: 4 semanas antes de la actual)
             end_week (int): Número de semana de fin (opcional, default: semana actual)
-            year (int): Año para el cual obtener los datos (opcional, default: año actual)
+            year (int): Año para end_week (deprecated, use end_year en su lugar)
+            start_year (int): Año ISO para start_week (opcional)
+            end_year (int): Año ISO para end_week (opcional)
             start_hour (int): Hora de inicio del rango (opcional, se obtiene de OPERATING_HOURS si no se especifica)
             end_hour (int): Hora de fin del rango (opcional, se obtiene de OPERATING_HOURS si no se especifica)
 
@@ -56,19 +58,62 @@ class ReportService:
             raise ValueError(
                 "El parámetro 'dia' es obligatorio y debe ser un entero entre 1 (Lunes) y 7 (Domingo)")
 
-        # Obtener el año actual
-        current_year = datetime.now().year
-        current_week = datetime.now().isocalendar()[1]
+        # Obtener el año actual ISO (importante para fin de año)
+        current_iso_calendar = datetime.now().isocalendar()
+        current_iso_year = current_iso_calendar[0]
+        current_week = current_iso_calendar[1]
 
-        # Establecer el año (usar el actual si no se proporciona)
-        target_year = year if year is not None else current_year
+        # Compatibilidad: si se usa 'year' (deprecated), usarlo como end_year
+        if year is not None and end_year is None:
+            end_year = year
+            
+        # Establecer el año objetivo de fin (usar el actual ISO si no se proporciona)
+        if end_year is None:
+            end_year = current_iso_year
+
+        # Establecer el año objetivo de fin (usar el actual ISO si no se proporciona)
+        if end_year is None:
+            end_year = current_iso_year
 
         # Establecer valores por defecto si no se proporcionan
         if end_week is None:
             end_week = current_week
+        
+        # Calcular start_week y start_year considerando cruce de años
         if start_week is None:
-            # 7 semanas anteriores + la actual = 8 semanas total
-            start_week = max(1, end_week - BASE_WEEKS)
+            # Calcular cuántas semanas queremos ir atrás
+            target_start_week = end_week - BASE_WEEKS
+            
+            # Si el resultado es menor o igual a 0, necesitamos semanas del año anterior
+            if target_start_week <= 0:
+                # Calcular cuántas semanas tiene el año anterior a end_year
+                previous_year = end_year - 1
+                last_day_previous_year = datetime(previous_year, 12, 28)  # Una fecha en la última semana del año
+                weeks_in_previous_year = last_day_previous_year.isocalendar()[1]
+                
+                # Si está cerca de fin de año, verificar si la semana 53 existe
+                if datetime(previous_year, 12, 31).isocalendar()[1] > weeks_in_previous_year:
+                    weeks_in_previous_year = datetime(previous_year, 12, 31).isocalendar()[1]
+                
+                # Calcular la semana de inicio en el año anterior
+                start_week = weeks_in_previous_year + target_start_week + 1
+                start_year = previous_year
+                print(f"DEBUG: Cruce de año detectado - retrocediendo {BASE_WEEKS} semanas desde semana {end_week}/{end_year}")
+                print(f"DEBUG: start_week ajustada a {start_week} del año {start_year} (año anterior tiene {weeks_in_previous_year} semanas)")
+            else:
+                start_week = target_start_week
+                start_year = end_year
+        else:
+            # start_week fue proporcionada explícitamente
+            # Si start_year no fue proporcionado, asumimos el mismo año que end_year
+            if start_year is None:
+                # Si start_week > end_week y end_week es pequeña, probablemente hay cruce de años
+                if start_week > end_week and end_week <= 10:
+                    start_year = end_year - 1
+                    print(f"DEBUG: Cruce de año detectado con semanas explícitas - start_week {start_week} del {start_year}, end_week {end_week} del {end_year}")
+                else:
+                    # No hay cruce de año, mismo año
+                    start_year = end_year
 
         # Obtener horarios de operación para el día especificado
         if start_hour is None or end_hour is None:
@@ -82,17 +127,19 @@ class ReportService:
                 # Valores por defecto si no se encuentra el día
                 start_hour = start_hour or 7
                 end_hour = end_hour or 3
+        
         # Calcular fechas de inicio y fin basadas en las semanas ISO
-
         def get_week_start_end(year, week):
             """Obtiene el primer y último día de una semana ISO"""
             jan4 = datetime(year, 1, 4)
             start = jan4 + timedelta(days=jan4.weekday() * -1, weeks=week-1)
             end = start + timedelta(days=6)
             return start.date(), end.date()
-
-        start_date, _ = get_week_start_end(target_year, start_week)
-        _, end_date = get_week_start_end(target_year, end_week)
+        
+        start_date, _ = get_week_start_end(start_year, start_week)
+        _, end_date = get_week_start_end(end_year, end_week)
+        
+        print(f"DEBUG: Buscando datos entre {start_date} (semana {start_week}/{start_year}) y {end_date} (semana {end_week}/{end_year})")
 
         # Crear lista de horas válidas basada en el rango especificado
         valid_hours = []
@@ -197,6 +244,24 @@ class ReportService:
                 'datetime': datetime.combine(log.date, log.time)
             })
 
+        # Crear lista de semanas a procesar (considerando cruce de años)
+        weeks_to_process = []
+        if start_year < end_year:
+            # Cruce de año: semanas del año anterior + semanas del año actual
+            # Desde start_week hasta la última semana del año anterior
+            last_day_start_year = datetime(start_year, 12, 28)
+            weeks_in_start_year = last_day_start_year.isocalendar()[1]
+            if datetime(start_year, 12, 31).isocalendar()[1] > weeks_in_start_year:
+                weeks_in_start_year = datetime(start_year, 12, 31).isocalendar()[1]
+            
+            weeks_to_process = list(range(start_week, weeks_in_start_year + 1))
+            # Agregar semanas del año actual (desde 1 hasta end_week)
+            weeks_to_process.extend(list(range(1, end_week + 1)))
+            print(f"DEBUG: Procesando {len(weeks_to_process)} semanas: {weeks_to_process}")
+        else:
+            # Mismo año: rango normal
+            weeks_to_process = list(range(start_week, end_week + 1))
+
         # Procesar los datos para obtener el registro más tardío por hora/semana
         result = []
 
@@ -209,7 +274,7 @@ class ReportService:
 
             counts_for_variation = []
 
-            for week_num in range(start_week, end_week + 1):
+            for week_num in weeks_to_process:
                 if week_num in weeks_data:
                     # Obtener el registro más tardío de la hora usando la nueva ventana de tiempo
                     hour_int = int(hour_key.split(':')[0])
@@ -287,20 +352,16 @@ class ReportService:
 
         # Calcular variación total del día (todas las horas) vs semana anterior
         daily_variation = self._calculate_daily_variation(
-            result, start_week, end_week, dia, start_hour, end_hour)
+            result, weeks_to_process, dia, start_hour, end_hour)
 
         # Calcular comparación con meta diaria si es posible (optimizado)
         daily_meta_vs_real = None
         if result:
-            # Obtener semanas únicas desde los datos de resultado (optimizado)
-            weeks = set()
-            for row in result:
-                weeks.update(row["semanas"].keys())
-            weeks = sorted([int(w) for w in weeks])
-
-            if weeks:
-                # Obtener la fecha más reciente de la semana actual
-                current_week = max(weeks)
+            # Usar la última semana de weeks_to_process (que considera cruce de años correctamente)
+            # En lugar de max(weeks) que puede ser incorrecto cuando cruza años
+            current_week = weeks_to_process[-1] if weeks_to_process else None
+            
+            if current_week:
                 today = datetime.now().date()
 
                 # Buscar una fecha que corresponda al día especificado en la semana actual
@@ -327,15 +388,16 @@ class ReportService:
                         print(
                             f"Error al obtener comparación meta vs real: {e}")
                         daily_meta_vs_real = None
-
-        return {
+        data = {
             'hourly_data': result,
             'daily_variation': daily_variation,
             'daily_meta_vs_real': daily_meta_vs_real,
-            'current_time': self._get_current_time_summary(result, start_week, end_week, dia, start_hour, end_hour)
+            'current_time': self._get_current_time_summary(result, weeks_to_process, dia, start_hour, end_hour)
         }
+        print(f"DEBUG: Reporte generado con datos: {data}")
+        return data
 
-    def _get_current_time_summary(self, hourly_data, start_week, end_week, dia, start_hour, end_hour):
+    def _get_current_time_summary(self, hourly_data, weeks_list, dia, start_hour, end_hour):
         """
         Obtiene un resumen del estado actual comparando semana pasada vs actual.
         Usa la misma hora (última hora con datos de semana actual) para ambas semanas.
@@ -344,8 +406,7 @@ class ReportService:
 
         Args:
             hourly_data (list): Datos por hora procesados
-            start_week (int): Semana de inicio
-            end_week (int): Semana de fin
+            weeks_list (list): Lista de números de semanas a procesar
             dia (int): Día de la semana (1=Lunes, 7=Domingo)
             start_hour (int): Hora de inicio del rango de operación
             end_hour (int): Hora de fin del rango de operación
@@ -354,7 +415,7 @@ class ReportService:
             dict: Resumen con datos de semana pasada, actual, última hora y variación
         """
         # Obtener todas las semanas disponibles
-        weeks = list(range(start_week, end_week + 1))
+        weeks = weeks_list
 
         # Si no hay suficientes semanas, retornar valores por defecto
         if len(weeks) < 2:
@@ -442,7 +503,7 @@ class ReportService:
             'variacion': variacion
         }
 
-    def _calculate_daily_variation(self, hourly_data, start_week, end_week, dia, start_hour, end_hour):
+    def _calculate_daily_variation(self, hourly_data, weeks_list, dia, start_hour, end_hour):
         """
         Calcula la variación total del día completo comparando la semana actual vs la semana anterior.
 
@@ -455,8 +516,7 @@ class ReportService:
 
         Args:
             hourly_data (list): Datos por hora procesados
-            start_week (int): Semana de inicio
-            end_week (int): Semana de fin
+            weeks_list (list): Lista de números de semanas a procesar
             dia (int): Día de la semana (1=Lunes, 7=Domingo)
             start_hour (int): Hora de inicio del rango de operación
             end_hour (int): Hora de fin del rango de operación
@@ -465,7 +525,7 @@ class ReportService:
             dict: Diccionario con variación diaria y totales por semana
         """
         # Obtener todas las semanas disponibles
-        weeks = list(range(start_week, end_week + 1))
+        weeks = weeks_list
 
         # Si no hay suficientes semanas para comparar, retornar valores por defecto
         if len(weeks) < 2:
@@ -615,7 +675,7 @@ class ReportService:
             'previous_week_comparison_hour': previous_week_comparison_hour
         }
 
-    def send_report_by_email(self, dia_seleccionado, start_week=None, end_week=None, year=None, start_hour=7, end_hour=3):
+    def send_report_by_email(self, dia_seleccionado, start_week=None, end_week=None, year=None, start_year=None, end_year=None, start_hour=7, end_hour=3):
         try:
             # Generar el reporte con los parámetros recibidos
             report_data = self.get_datetime_variation(
@@ -623,6 +683,8 @@ class ReportService:
                 start_week=start_week,
                 end_week=end_week,
                 year=year,
+                start_year=start_year,
+                end_year=end_year,
                 start_hour=start_hour,
                 end_hour=end_hour
             )
@@ -663,7 +725,9 @@ class ReportService:
                 max_variacion = max(variaciones) if variaciones else 1
 
                 # Encontrar la última hora con datos en una sola iteración reversa
-                ultima_semana_str = str(max(weeks)) if weeks else None
+                # Usar weeks[-1] en lugar de max(weeks) para manejar cross-year correctamente
+                # Ejemplo: [50, 51, 52, 1] -> última semana es 1, no 52
+                ultima_semana_str = str(weeks[-1]) if weeks else None
                 total_ordenes_ultima_hora = 0
                 ultima_hora_hoy = None
 
@@ -715,7 +779,7 @@ class ReportService:
         except Exception as e:
             print(f"Error al enviar el reporte por email: {e}")
 
-    def send_report_by_whatsapp(self, dia_seleccionado, start_week=None, end_week=None, year=None, start_hour=7, end_hour=3):
+    def send_report_by_whatsapp(self, dia_seleccionado, start_week=None, end_week=None, year=None, start_year=None, end_year=None, start_hour=7, end_hour=3):
         """
         Envía el reporte de tráfico por WhatsApp usando el servicio de WhatsApp.
         Genera una imagen a partir del template HTML y la envía como adjunto.
@@ -724,7 +788,9 @@ class ReportService:
             dia_seleccionado (int): Día de la semana (1=Lunes, 7=Domingo)
             start_week (int): Semana de inicio (opcional)
             end_week (int): Semana de fin (opcional)
-            year (int): Año (opcional)
+            year (int): Año para end_week (deprecated, usar end_year)
+            start_year (int): Año ISO para start_week (opcional)
+            end_year (int): Año ISO para end_week (opcional)
             start_hour (int): Hora de inicio (opcional)
             end_hour (int): Hora de fin (opcional)
         """
@@ -739,6 +805,8 @@ class ReportService:
                 start_week=start_week,
                 end_week=end_week,
                 year=year,
+                start_year=start_year,
+                end_year=end_year,
                 start_hour=start_hour,
                 end_hour=end_hour
             )
@@ -809,7 +877,9 @@ class ReportService:
                 max_variacion = max(variaciones) if variaciones else 1
 
                 # Encontrar la última hora con datos en una sola iteración reversa
-                ultima_semana_str = str(max(weeks)) if weeks else None
+                # Usar weeks[-1] en lugar de max(weeks) para manejar cross-year correctamente
+                # Ejemplo: [50, 51, 52, 1] -> última semana es 1, no 52
+                ultima_semana_str = str(weeks[-1]) if weeks else None
                 total_ordenes_ultima_hora = 0
                 ultima_hora_hoy = None
 
@@ -856,13 +926,13 @@ class ReportService:
                 if False:
                     # Mensaje corto cuando hay imagen válida
                     message_text = f"📊 Corte {dia_nombre}"
-                    if ultima_hora_hoy:
-                        message_text += f" - {ultima_hora_hoy}"
+                    if current_time and current_time.get('ultima_hora_toma_datos_w_actual'):
+                        message_text += f" - {current_time['ultima_hora_toma_datos_w_actual']}"
                 else:
                     # Mensaje descriptivo cuando no hay imagen
                     message_text = f"📊 Corte {dia_nombre}"
-                    if ultima_hora_hoy:
-                        message_text += f" - {ultima_hora_hoy}"
+                    if current_time and current_time.get('ultima_hora_toma_datos_w_actual'):
+                        message_text += f" - {current_time['ultima_hora_toma_datos_w_actual']}"
 
                     # Agregar información resumida en el texto
                     if current_time:
@@ -888,6 +958,9 @@ class ReportService:
                 notification_type_constant=EmailNotificationType.TRAFFIC_REPORT
             )
             phone_numbers = list(phone_numbers)
+            
+            # phone_numbers = ['+593994504722']
+            
 
             # Si no hay números configurados, usar número por defecto
             if not phone_numbers:
@@ -909,7 +982,7 @@ class ReportService:
                     response_data, response = whatsapp_service.send_message(
                         to=phone_number,
                         text=message_text,
-                        image=image_url  # Será None si falló o es localhost
+                        image=image_url 
                     )
 
                     if response.status_code == 200:

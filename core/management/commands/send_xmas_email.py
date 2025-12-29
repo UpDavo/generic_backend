@@ -31,6 +31,9 @@ class Command(BaseCommand):
             {'email': 'ariana@casadigital.ec', 'nombre': 'Ariana'},
             {'email': 'isaiguaranda@gmail.com', 'nombre': 'Abner'},
             {'email': 'luis.carvajal@ab-inbev.com', 'nombre': 'Luis'},
+            {'email': 'danialemedina@gmail.com', 'nombre': 'Daniela'},
+            {'email': 'locana@heimdal.ec', 'nombre': 'Lorena'},
+            {'email': 'lore_ocana@hotmail.com', 'nombre': 'Lorena'},
         ]
 
         if not recipients:

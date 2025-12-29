@@ -205,7 +205,16 @@ class BrazeService:
             "ending_at": ending_at.isoformat() if ending_at else None,
             "unit": unit if unit else "day"
         }
+        
+        url = f"{BRAZE_API_URL}/events/data_series"
+        
+        # Construir URL completa con parámetros
+        params_str = "&".join([f"{key}={value}" for key, value in url_params.items() if value is not None])
+        full_url = f"{url}?{params_str}"
+        print(f"URL completa: {full_url}")
+        
         message_response = requests.get(
-            f"{BRAZE_API_URL}/events/data_series", params=url_params, headers=self.headers)
+            url, params=url_params, headers=self.headers)
         message_response_data = message_response.json()
+        
         return message_response_data, message_response

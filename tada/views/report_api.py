@@ -11,7 +11,22 @@ from tada.services.command_service import execute_fetch_simple
 
 
 class DatetimeVariationReportView(APIView):
-    """Vista para obtener variación de tráfico por hora durante un rango de semanas"""
+    """
+    Vista para obtener variación de tráfico por hora durante un rango de semanas.
+    
+    Parámetros de query:
+    - dia (requerido): Día de la semana (1=Lunes, 7=Domingo)
+    - start_week (opcional): Semana de inicio (ISO). Si no se proporciona, se calculan automáticamente 4 semanas atrás
+    - end_week (opcional): Semana de fin (ISO). Si no se proporciona, usa la semana actual
+    - start_year (opcional): Año ISO para start_week
+    - end_year (opcional): Año ISO para end_week
+    - year (opcional, deprecated): Año ISO para end_week. Use end_year en su lugar
+    
+    Ejemplos:
+    - /tada/reports/datetime-variation/?dia=1  (últimas 4 semanas del día lunes)
+    - /tada/reports/datetime-variation/?dia=1&start_week=52&start_year=2025&end_week=1&end_year=2026  (explícito para cruce de años)
+    - /tada/reports/datetime-variation/?dia=1&end_week=1&end_year=2026  (automáticamente calcula start_week/start_year)
+    """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -20,7 +35,9 @@ class DatetimeVariationReportView(APIView):
             dia = request.query_params.get('dia')
             start_week = request.query_params.get('start_week')
             end_week = request.query_params.get('end_week')
-            year = request.query_params.get('year')
+            year = request.query_params.get('year')  # Deprecated
+            start_year = request.query_params.get('start_year')
+            end_year = request.query_params.get('end_year')
 
             # Validar parámetro obligatorio
             if not dia:
@@ -48,6 +65,10 @@ class DatetimeVariationReportView(APIView):
                     end_week = int(end_week)
                 if year:
                     year = int(year)
+                if start_year:
+                    start_year = int(start_year)
+                if end_year:
+                    end_year = int(end_year)
             except ValueError:
                 return Response(
                     {'error': 'Los parámetros numéricos deben ser enteros válidos'},
@@ -76,6 +97,8 @@ class DatetimeVariationReportView(APIView):
                 start_week=start_week,
                 end_week=end_week,
                 year=year,
+                start_year=start_year,
+                end_year=end_year,
                 start_hour=start_hour,
                 end_hour=end_hour
             )
@@ -163,7 +186,17 @@ class ReportFetchView(APIView):
 
 
 class ReportEmailView(APIView):
-    """Vista para enviar reportes por email"""
+    """
+    Vista para enviar reportes por email/WhatsApp.
+    
+    Parámetros de query:
+    - dia (requerido): Día de la semana (1=Lunes, 7=Domingo)
+    - start_week (opcional): Semana de inicio (ISO). Si no se proporciona, se calculan automáticamente 4 semanas atrás
+    - end_week (opcional): Semana de fin (ISO). Si no se proporciona, usa la semana actual
+    - start_year (opcional): Año ISO para start_week
+    - end_year (opcional): Año ISO para end_week
+    - year (opcional, deprecated): Año ISO para end_week. Use end_year en su lugar
+    """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -172,7 +205,9 @@ class ReportEmailView(APIView):
             dia = request.query_params.get('dia')
             start_week = request.query_params.get('start_week')
             end_week = request.query_params.get('end_week')
-            year = request.query_params.get('year')
+            year = request.query_params.get('year')  # Deprecated
+            start_year = request.query_params.get('start_year')
+            end_year = request.query_params.get('end_year')
 
             # Validar parámetro obligatorio
             if not dia:
@@ -200,6 +235,10 @@ class ReportEmailView(APIView):
                     end_week = int(end_week)
                 if year:
                     year = int(year)
+                if start_year:
+                    start_year = int(start_year)
+                if end_year:
+                    end_year = int(end_year)
             except ValueError:
                 return Response(
                     {'error': 'Los parámetros numéricos deben ser enteros válidos'},
@@ -228,6 +267,8 @@ class ReportEmailView(APIView):
             #     start_week=start_week,
             #     end_week=end_week,
             #     year=year,
+            #     start_year=start_year,
+            #     end_year=end_year,
             #     start_hour=start_hour,
             #     end_hour=end_hour
             # )
@@ -238,6 +279,8 @@ class ReportEmailView(APIView):
                 start_week=start_week,
                 end_week=end_week,
                 year=year,
+                start_year=start_year,
+                end_year=end_year,
                 start_hour=start_hour,
                 end_hour=end_hour
             )
