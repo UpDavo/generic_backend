@@ -246,6 +246,8 @@ class ReportService:
 
         # Crear lista de semanas a procesar (considerando cruce de años)
         weeks_to_process = []
+        weeks_with_year = []  # Nueva lista con información de año para el template
+        
         if start_year < end_year:
             # Cruce de año: semanas del año anterior + semanas del año actual
             # Desde start_week hasta la última semana del año anterior
@@ -255,12 +257,21 @@ class ReportService:
                 weeks_in_start_year = datetime(start_year, 12, 31).isocalendar()[1]
             
             weeks_to_process = list(range(start_week, weeks_in_start_year + 1))
+            # Agregar semanas del año de inicio con su año
+            for week in range(start_week, weeks_in_start_year + 1):
+                weeks_with_year.append({'week': week, 'year': start_year, 'label': f'{week}.{start_year}'})
+            
             # Agregar semanas del año actual (desde 1 hasta end_week)
             weeks_to_process.extend(list(range(1, end_week + 1)))
+            for week in range(1, end_week + 1):
+                weeks_with_year.append({'week': week, 'year': end_year, 'label': f'{week}.{end_year}'})
+            
             print(f"DEBUG: Procesando {len(weeks_to_process)} semanas: {weeks_to_process}")
         else:
             # Mismo año: rango normal
             weeks_to_process = list(range(start_week, end_week + 1))
+            for week in weeks_to_process:
+                weeks_with_year.append({'week': week, 'year': end_year, 'label': f'{week}.{end_year}'})
 
         # Procesar los datos para obtener el registro más tardío por hora/semana
         result = []
@@ -392,7 +403,8 @@ class ReportService:
             'hourly_data': result,
             'daily_variation': daily_variation,
             'daily_meta_vs_real': daily_meta_vs_real,
-            'current_time': self._get_current_time_summary(result, weeks_to_process, dia, start_hour, end_hour)
+            'current_time': self._get_current_time_summary(result, weeks_to_process, dia, start_hour, end_hour),
+            'weeks_with_year': weeks_with_year  # Agregar información de semanas con año
         }
         print(f"DEBUG: Reporte generado con datos: {data}")
         return data
@@ -694,6 +706,7 @@ class ReportService:
             daily_variation = report_data['daily_variation']
             daily_meta_vs_real = report_data['daily_meta_vs_real']
             current_time = report_data['current_time']
+            weeks_with_year = report_data.get('weeks_with_year', [])
 
             # Usar constante para nombres de días
             dia_nombre = DAY_NAMES.get(dia_seleccionado, "Desconocido")
@@ -704,6 +717,7 @@ class ReportService:
                 email_data = {
                     'data': [],
                     'weeks': [],
+                    'weeks_with_year': weeks_with_year,
                     'max_variacion': 1,
                     'dia_nombre': dia_nombre,
                     'total_ordenes_ultima_hora': 0,
@@ -743,6 +757,7 @@ class ReportService:
                 email_data = {
                     'data': result,
                     'weeks': weeks,
+                    'weeks_with_year': weeks_with_year,
                     'max_variacion': max_variacion,
                     'dia_nombre': dia_nombre,
                     'total_ordenes_ultima_hora': total_ordenes_ultima_hora,
@@ -816,6 +831,7 @@ class ReportService:
             daily_variation = report_data['daily_variation']
             daily_meta_vs_real = report_data['daily_meta_vs_real']
             current_time = report_data['current_time']
+            weeks_with_year = report_data.get('weeks_with_year', [])
 
             # Usar constante para nombres de días
             dia_nombre = DAY_NAMES.get(dia_seleccionado, "Desconocido")
@@ -826,6 +842,7 @@ class ReportService:
                 whatsapp_data = {
                     'data': [],
                     'weeks': [],
+                    'weeks_with_year': weeks_with_year,
                     'max_variacion': 1,
                     'dia_nombre': dia_nombre,
                     'total_ordenes_ultima_hora': 0,
@@ -895,6 +912,7 @@ class ReportService:
                 whatsapp_data = {
                     'data': result,
                     'weeks': weeks,
+                    'weeks_with_year': weeks_with_year,
                     'max_variacion': max_variacion,
                     'dia_nombre': dia_nombre,
                     'total_ordenes_ultima_hora': total_ordenes_ultima_hora,

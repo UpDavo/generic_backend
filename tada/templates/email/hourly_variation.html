@@ -118,12 +118,12 @@
       <thead>
         <tr>
           <th rowspan="2" style="background-color: #1f1f1f; color: white; text-align: left; padding-left: 8px">HORA</th>
-          <th colspan="{{ weeks|length }}" style="background-color: #1f1f1f; color: white; text-align: left; padding-left: 8px; padding-bottom: 4px; padding-top: 8px">Semanas</th>
+          <th colspan="{{ weeks_with_year|length }}" style="background-color: #1f1f1f; color: white; text-align: left; padding-left: 8px; padding-bottom: 4px; padding-top: 8px">Semanas</th>
           <th rowspan="2" style="background-color: #1f1f1f; color: white; text-align: left; padding-left: 8px">VAR.%</th>
         </tr>
         <tr>
-          {% for week in weeks %}
-        <th style="background-color: #1f1f1f; color: white; text-align: left; padding-left: 8px; padding-bottom: 8px;">S.{{ week }}</th>
+          {% for week_info in weeks_with_year %}
+        <th style="background-color: #1f1f1f; color: white; text-align: left; padding-left: 8px; padding-bottom: 8px;">{{ week_info.label }}</th>
           {% endfor %}
         </tr>
       </thead>
@@ -131,8 +131,8 @@
         {% for row in data %}
           <tr>
             <td style="font-weight: bold; background-color: #f9f9f9; padding-left: 8px;">{{ row.hora }}</td>
-            {% for week in weeks %}
-              <td>{{ row.semanas|get_item:week }}</td>
+            {% for week_info in weeks_with_year %}
+              <td>{{ row.semanas|get_item:week_info.week }}</td>
             {% endfor %}
             <td>
               <div style="font-weight:bold; padding: 8px;">{{ row.variacion }}%</div>
