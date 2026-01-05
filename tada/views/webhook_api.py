@@ -204,8 +204,6 @@ class WebhookReceiverCancelledView(APIView):
                 # Crear mensaje de WhatsApp
                 message_text = f"*Nuevo pedido cancelado de:*\n\n{name}\n"
                 message_text += f"{masked_email}\n\n"
-                message_text += f"Revisar en hint:\n\n"
-                message_text += f"https://hint.heimdal.ec/dashboard/webhooks"
 
                 # Enviar mensaje a cada número configurado
                 for phone_number in phone_numbers:
