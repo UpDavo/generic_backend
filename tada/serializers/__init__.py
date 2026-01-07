@@ -13,3 +13,17 @@ from .daily_meta_serializer import (
     DailyMetaUpdateSerializer,
     DailyMetaListSerializer
 )
+from .sku_serializer import (
+    SKUSerializer,
+    SKUSimpleSerializer,
+    SKUListSerializer,
+    SKUCreateSerializer,
+    SKUUpdateSerializer
+)
+from .poc_serializer import (
+    POCSerializer,
+    POCSimpleSerializer,
+    POCListSerializer,
+    POCCreateSerializer,
+    POCUpdateSerializer
+)

@@ -108,6 +108,36 @@ urlpatterns = [
     path('daily-meta/bulk-create-excel/', DailyMetaBulkCreateFromExcelView.as_view(),
          name='daily-meta-bulk-create-excel'),
 
+    # Sales Report Processor
+    path('sales-report/process/', SalesReportProcessorView.as_view(),
+         name='sales-report-process'),
+    path('sales-report-logs/', SalesReportLogsListView.as_view(),
+         name='sales-report-logs-list'),
+    path('sales-report-logs/stats/', SalesReportLogsStatsView.as_view(),
+         name='sales-report-logs-stats'),
+
+    # SKU (CRUD completo)
+    path('skus/', SKUListCreateView.as_view(),
+         name='sku-list-create'),
+    path('skus/search/', SKUPrincipalSearchView.as_view(),
+         name='sku-principal-search'),
+    path('skus/<int:pk>/',
+         SKURetrieveUpdateDestroyView.as_view(), name='sku-detail'),
+    path('skus/bulk-create-excel/', SKUBulkCreateFromExcelView.as_view(),
+         name='sku-bulk-create-excel'),
+    path('skus/download-template/', SKUDownloadTemplateView.as_view(),
+         name='sku-download-template'),
+
+    # POC (CRUD completo)
+    path('pocs/', POCListCreateView.as_view(),
+         name='poc-list-create'),
+    path('pocs/<int:pk>/',
+         POCRetrieveUpdateDestroyView.as_view(), name='poc-detail'),
+    path('pocs/bulk-create-excel/', POCBulkCreateFromExcelView.as_view(),
+         name='poc-bulk-create-excel'),
+    path('pocs/download-template/', POCDownloadTemplateView.as_view(),
+         name='poc-download-template'),
+
     # Reports API
     path('reports/datetime-variation/', DatetimeVariationReportView.as_view(),
          name='datetime-variation-report'),

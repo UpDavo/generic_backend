@@ -4,6 +4,7 @@ CANVAS = 2
 TRAFFIC = 3
 EXECUTION = 4
 WEBHOOK = 5
+SALES = 6
 
 APP_NAMES = {
     PUSH: "Push",
@@ -11,6 +12,7 @@ APP_NAMES = {
     TRAFFIC: "Traffic",
     EXECUTION: "Execution",
     WEBHOOK: "Webhook",
+    SALES: "Sales Report",
 }
 
 APPS = {
@@ -19,6 +21,7 @@ APPS = {
     "TRAFFIC": TRAFFIC,
     "EXECUTION": EXECUTION,
     "WEBHOOK": WEBHOOK,
+    "SALES": SALES,
 }
 
 
