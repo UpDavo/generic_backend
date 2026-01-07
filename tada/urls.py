@@ -116,17 +116,29 @@ urlpatterns = [
     path('sales-report-logs/stats/', SalesReportLogsStatsView.as_view(),
          name='sales-report-logs-stats'),
 
-    # SKU (CRUD completo)
-    path('skus/', SKUListCreateView.as_view(),
-         name='sku-list-create'),
-    path('skus/search/', SKUPrincipalSearchView.as_view(),
-         name='sku-principal-search'),
-    path('skus/<int:pk>/',
-         SKURetrieveUpdateDestroyView.as_view(), name='sku-detail'),
-    path('skus/bulk-create-excel/', SKUBulkCreateFromExcelView.as_view(),
-         name='sku-bulk-create-excel'),
-    path('skus/download-template/', SKUDownloadTemplateView.as_view(),
-         name='sku-download-template'),
+    # VentasProductosCompra (CRUD completo)
+    path('ventas-productos-compra/', VentasProductosCompraListCreateView.as_view(),
+         name='ventas-productos-compra-list-create'),
+    path('ventas-productos-compra/search/', VentasProductosCompraSearchView.as_view(),
+         name='ventas-productos-compra-search'),
+    path('ventas-productos-compra/<int:pk>/',
+         VentasProductosCompraRetrieveUpdateDestroyView.as_view(), name='ventas-productos-compra-detail'),
+    path('ventas-productos-compra/bulk-create-excel/', VentasProductosCompraBulkCreateFromExcelView.as_view(),
+         name='ventas-productos-compra-bulk-create-excel'),
+    path('ventas-productos-compra/download-template/', VentasProductosCompraDownloadTemplateView.as_view(),
+         name='ventas-productos-compra-download-template'),
+
+    # VentasProductosApp (CRUD completo)
+    path('ventas-productos-app/', VentasProductosAppListCreateView.as_view(),
+         name='ventas-productos-app-list-create'),
+    path('ventas-productos-app/search/', VentasProductosAppPrincipalSearchView.as_view(),
+         name='ventas-productos-app-principal-search'),
+    path('ventas-productos-app/<int:pk>/',
+         VentasProductosAppRetrieveUpdateDestroyView.as_view(), name='ventas-productos-app-detail'),
+    path('ventas-productos-app/bulk-create-excel/', VentasProductosAppBulkCreateFromExcelView.as_view(),
+         name='ventas-productos-app-bulk-create-excel'),
+    path('ventas-productos-app/download-template/', VentasProductosAppDownloadTemplateView.as_view(),
+         name='ventas-productos-app-download-template'),
 
     # POC (CRUD completo)
     path('pocs/', POCListCreateView.as_view(),

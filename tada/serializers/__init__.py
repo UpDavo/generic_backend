@@ -13,12 +13,20 @@ from .daily_meta_serializer import (
     DailyMetaUpdateSerializer,
     DailyMetaListSerializer
 )
-from .sku_serializer import (
-    SKUSerializer,
-    SKUSimpleSerializer,
-    SKUListSerializer,
-    SKUCreateSerializer,
-    SKUUpdateSerializer
+from .ventas_productos_compra_serializer import (
+    VentasProductosCompraSerializer,
+    VentasProductosCompraSimpleSerializer,
+    VentasProductosCompraListSerializer,
+    VentasProductosCompraCreateSerializer,
+    VentasProductosCompraUpdateSerializer
+)
+from .ventas_productos_app_serializer import (
+    VentasProductosAppSerializer,
+    VentasProductosAppSimpleSerializer,
+    VentasProductosAppListSerializer,
+    VentasProductosAppCreateSerializer,
+    VentasProductosAppUpdateSerializer,
+    VentasProductosAppMaterialSerializer
 )
 from .poc_serializer import (
     POCSerializer,

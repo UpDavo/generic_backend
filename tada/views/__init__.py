@@ -11,5 +11,6 @@ from .price_history_api import *
 from .report_api import *
 from .webhook_api import *
 from .sales_report_api import *
-from .sku_api import *
+from .ventas_productos_compra_api import *
+from .ventas_productos_app_api import *
 from .poc_api import *

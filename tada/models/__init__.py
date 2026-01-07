@@ -9,6 +9,7 @@ from .trafficLog import TrafficLog
 from .executionLog import ExecutionLog
 from .dailyMeta import DailyMeta
 from .webhookLog import WebhookLog
-from .sku import SKU
+from .ventasProductosCompra import VentasProductosCompra
+from .ventasProductosApp import VentasProductosApp, VentasProductosAppMaterial
 from .poc import POC
 from .salesReportLog import SalesReportLog
