@@ -9,6 +9,8 @@ import pandas as pd
 from io import BytesIO
 from datetime import datetime
 from tqdm import tqdm
+import unicodedata
+import re
 
 from tada.models import VentasProductosCompra
 from tada.serializers import (
@@ -18,6 +20,110 @@ from tada.serializers import (
     VentasProductosCompraUpdateSerializer,
     VentasProductosCompraSimpleSerializer
 )
+
+
+def remove_accents(text):
+    """Remove accents from text."""
+    if not text:
+        return text
+    text = str(text)
+    nfd = unicodedata.normalize('NFD', text)
+    return ''.join([c for c in nfd if unicodedata.category(c) != 'Mn'])
+
+
+def clean_text(value):
+    """Clean text: remove accents, convert to lowercase, handle N/A."""
+    if pd.isna(value) or str(value).upper() in ['N/A', 'NA', 'NAN', 'NONE']:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    # Remove accents and convert to lowercase
+    text = remove_accents(text)
+    text = text.lower()
+    return text
+
+
+def clean_numeric(value, max_digits=12, decimal_places=2):
+    """Clean numeric values: handle N/A, convert comma to dot, remove $ sign, round to decimal places."""
+    if pd.isna(value) or str(value).upper() in ['N/A', 'NA', 'NAN', 'NONE', '']:
+        return None
+
+    # Convert to string and clean
+    value_str = str(value).strip()
+    if not value_str:
+        return None
+
+    # Remove $ sign and any other currency symbols
+    value_str = value_str.replace('$', '').replace(
+        '€', '').replace('£', '').strip()
+
+    # Replace comma with dot
+    value_str = value_str.replace(',', '.')
+
+    try:
+        num_value = float(value_str)
+
+        # Round to specified decimal places
+        num_value = round(num_value, decimal_places)
+
+        # Check if it exceeds max_digits constraint
+        # max_digits includes all digits (before and after decimal point)
+        integer_part = abs(int(num_value))
+        integer_digits = len(str(integer_part))
+        total_allowed_integer_digits = max_digits - decimal_places
+
+        if integer_digits > total_allowed_integer_digits:
+            # Truncate to max allowed
+            max_value = (10 ** total_allowed_integer_digits) - \
+                (10 ** -decimal_places)
+            return max_value if num_value > 0 else -max_value
+
+        return num_value
+    except (ValueError, TypeError):
+        return None
+
+
+def clean_origen(value):
+    """Clean and map origen values to valid choices: importado or nacional."""
+    if pd.isna(value) or str(value).upper() in ['N/A', 'NA', 'NAN', 'NONE']:
+        return None
+
+    value_str = str(value).strip().lower()
+    value_str = remove_accents(value_str)
+
+    # Map different variations to valid choices
+    if value_str in ['nacional', 'local', 'produccion local', 'nacional local', 'domestico']:
+        return 'nacional'
+    elif value_str in ['importado', 'importacion', 'import', 'extranjero', 'internacional']:
+        return 'importado'
+
+    return None
+
+
+def clean_boolean(value):
+    """Clean boolean values: handle Si/No, True/False, 1/0."""
+    if pd.isna(value) or str(value).upper() in ['N/A', 'NA', 'NAN', 'NONE']:
+        return False
+
+    value_str = str(value).strip().lower()
+    value_str = remove_accents(value_str)  # Remove accents from 'sí'
+
+    return value_str in ['true', '1', 'yes', 'si', 'sí', 's', 'y']
+
+
+def clean_code(value):
+    """Clean code: can be text or numbers, uppercase, no accents."""
+    if pd.isna(value) or str(value).upper() in ['N/A', 'NA', 'NAN', 'NONE']:
+        return None
+
+    code = str(value).strip()
+    if not code:
+        return None
+
+    # Remove accents but keep uppercase
+    code = remove_accents(code)
+    return code.upper()
 
 
 class VentasProductosCompraListCreateView(APIView):
@@ -30,7 +136,7 @@ class VentasProductosCompraListCreateView(APIView):
     def get(self, request):
         """
         List all VentasProductosCompra with optional filters.
-        
+
         Query params:
         - code: Search by code (contains)
         - name: Search by name (contains)
@@ -80,17 +186,18 @@ class VentasProductosCompraListCreateView(APIView):
         if search:
             from django.db.models import Q
             queryset = queryset.filter(
-                Q(name__icontains=search) | 
+                Q(name__icontains=search) |
                 Q(code__icontains=search) |
                 Q(homologated_names__icontains=search)
             )
 
         queryset = queryset.order_by('-created_at')
-        
+
         # Apply pagination
         paginator = self.pagination_class()
         paginated_queryset = paginator.paginate_queryset(queryset, request)
-        serializer = VentasProductosCompraListSerializer(paginated_queryset, many=True)
+        serializer = VentasProductosCompraListSerializer(
+            paginated_queryset, many=True)
         return paginator.get_paginated_response(serializer.data)
 
     def post(self, request):
@@ -114,17 +221,17 @@ class VentasProductosCompraSearchView(APIView):
     def get(self, request):
         """
         Search VentasProductosCompra by name or code.
-        
+
         Query params:
         - search: Search term for name, code, or brand
-        
+
         Returns:
             List of products matching the search criteria (no pagination)
         """
         search_term = request.query_params.get('search', '').strip()
-        
+
         queryset = VentasProductosCompra.objects.all()
-        
+
         # Apply search filter if provided
         if search_term:
             from django.db.models import Q
@@ -134,10 +241,10 @@ class VentasProductosCompraSearchView(APIView):
                 Q(brand__icontains=search_term) |
                 Q(homologated_names__icontains=search_term)
             )
-        
+
         # Order by name and limit results
         queryset = queryset.order_by('name')[:100]
-        
+
         serializer = VentasProductosCompraSimpleSerializer(queryset, many=True)
         return Response(serializer.data)
 
@@ -164,7 +271,8 @@ class VentasProductosCompraRetrieveUpdateDestroyView(APIView):
         Completely update a VentasProductosCompra.
         """
         producto = self.get_object(pk)
-        serializer = VentasProductosCompraUpdateSerializer(producto, data=request.data)
+        serializer = VentasProductosCompraUpdateSerializer(
+            producto, data=request.data)
         if serializer.is_valid():
             serializer.save()
             return Response(VentasProductosCompraSerializer(producto).data)
@@ -175,7 +283,8 @@ class VentasProductosCompraRetrieveUpdateDestroyView(APIView):
         Partially update a VentasProductosCompra.
         """
         producto = self.get_object(pk)
-        serializer = VentasProductosCompraUpdateSerializer(producto, data=request.data, partial=True)
+        serializer = VentasProductosCompraUpdateSerializer(
+            producto, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
             return Response(VentasProductosCompraSerializer(producto).data)
@@ -242,7 +351,8 @@ class VentasProductosCompraBulkCreateFromExcelView(APIView):
 
             # Validate that required columns exist
             required_columns = ['code', 'name']
-            missing_columns = [col for col in required_columns if col not in df.columns]
+            missing_columns = [
+                col for col in required_columns if col not in df.columns]
 
             if missing_columns:
                 return Response(
@@ -256,50 +366,90 @@ class VentasProductosCompraBulkCreateFromExcelView(APIView):
             print(f"\n🔄 Processing {len(df)} products...")
             for index, row in tqdm(df.iterrows(), total=len(df), desc="Creating/Updating Products", unit="row"):
                 try:
-                    # Validate required fields
-                    if pd.isna(row['code']) or pd.isna(row['name']):
-                        error_msg = f"Row {index+2}: Required fields are empty"
+                    # Clean and validate code (required)
+                    code = clean_code(row.get('code'))
+                    if not code:
+                        error_msg = f"Row {index+2}: Code is required and cannot be empty"
                         print(f"❌ {error_msg}")
                         errors.append(error_msg)
                         continue
 
-                    # Process homologated_names
-                    homologated_names = []
-                    if 'homologated_names' in row and not pd.isna(row['homologated_names']):
-                        names_str = str(row['homologated_names'])
-                        homologated_names = [n.strip() for n in names_str.split(',') if n.strip()]
+                    # Clean and validate name (required)
+                    name = clean_text(row.get('name'))
+                    if not name:
+                        error_msg = f"Row {index+2}: Name is required and cannot be empty"
+                        print(f"❌ {error_msg}")
+                        errors.append(error_msg)
+                        continue
 
-                    # Process returnable
-                    returnable = False
-                    if 'returnable' in row and not pd.isna(row['returnable']):
-                        returnable_str = str(row['returnable']).lower()
-                        returnable = returnable_str in ['true', '1', 'yes', 'sí', 'si']
+                    # Process homologated_names (clean each name)
+                    homologated_names = []
+                    if 'homologated_names' in row:
+                        raw_names = row.get('homologated_names')
+                        if not pd.isna(raw_names) and str(raw_names).upper() not in ['N/A', 'NA', 'NAN', 'NONE']:
+                            names_str = str(raw_names)
+                            homologated_names = [
+                                clean_text(n) for n in names_str.split(',')
+                                if clean_text(n)
+                            ]
+
+                    # Clean numeric fields with proper decimal places and max digits
+                    mililiters_per_unit = clean_numeric(
+                        row.get('mililiters_per_unit'), max_digits=10, decimal_places=2)
+                    cost_per_unit = clean_numeric(
+                        row.get('cost_per_unit'), max_digits=12, decimal_places=2)
+                    cost_per_box = clean_numeric(
+                        row.get('cost_per_box'), max_digits=12, decimal_places=2)
+                    cost_per_hectoliter = clean_numeric(
+                        row.get('cost_per_hectoliter'), max_digits=12, decimal_places=2)
+                    hectoliter_per_unit = clean_numeric(
+                        row.get('hectoliter_per_unit'), max_digits=10, decimal_places=6)
+                    hectoliter_box = clean_numeric(
+                        row.get('hectoliter_box'), max_digits=10, decimal_places=6)
+
+                    # Clean box_units (integer)
+                    box_units = clean_numeric(
+                        row.get('box_units'), max_digits=10, decimal_places=0)
+                    if box_units is not None:
+                        box_units = int(box_units)
+
+                    # Clean text fields
+                    primary_can = clean_text(row.get('primary_can'))
+                    # Use special origen cleaner
+                    origen = clean_origen(row.get('origen'))
+                    brand = clean_text(row.get('brand'))
+                    category = clean_text(row.get('category'))
+
+                    # Clean boolean field
+                    returnable = clean_boolean(row.get('returnable'))
 
                     # Prepare data
                     product_data = {
-                        'code': str(row['code']).strip(),
-                        'name': str(row['name']).strip(),
+                        'code': code,
+                        'name': name,
                         'homologated_names': homologated_names,
-                        'mililiters_per_unit': float(row.get('mililiters_per_unit')) if not pd.isna(row.get('mililiters_per_unit')) else None,
-                        'box_units': int(row.get('box_units')) if not pd.isna(row.get('box_units')) else None,
-                        'primary_can': str(row.get('primary_can')).strip() if not pd.isna(row.get('primary_can')) else None,
+                        'mililiters_per_unit': mililiters_per_unit,
+                        'box_units': box_units,
+                        'primary_can': primary_can,
                         'returnable': returnable,
-                        'origen': str(row.get('origen')).strip() if not pd.isna(row.get('origen')) else None,
-                        'cost_per_unit': float(row.get('cost_per_unit')) if not pd.isna(row.get('cost_per_unit')) else None,
-                        'cost_per_box': float(row.get('cost_per_box')) if not pd.isna(row.get('cost_per_box')) else None,
-                        'cost_per_hectoliter': float(row.get('cost_per_hectoliter')) if not pd.isna(row.get('cost_per_hectoliter')) else None,
-                        'brand': str(row.get('brand')).strip() if not pd.isna(row.get('brand')) else None,
-                        'category': str(row.get('category')).strip() if not pd.isna(row.get('category')) else None,
-                        'hectoliter_per_unit': float(row.get('hectoliter_per_unit')) if not pd.isna(row.get('hectoliter_per_unit')) else None,
-                        'hectoliter_box': float(row.get('hectoliter_box')) if not pd.isna(row.get('hectoliter_box')) else None,
+                        'origen': origen,
+                        'cost_per_unit': cost_per_unit,
+                        'cost_per_box': cost_per_box,
+                        'cost_per_hectoliter': cost_per_hectoliter,
+                        'brand': brand,
+                        'category': category,
+                        'hectoliter_per_unit': hectoliter_per_unit,
+                        'hectoliter_box': hectoliter_box,
                     }
 
                     # Check if a product with this code already exists
-                    existing_product = VentasProductosCompra.objects.filter(code=product_data['code']).first()
+                    existing_product = VentasProductosCompra.objects.filter(
+                        code=product_data['code']).first()
 
                     if existing_product:
                         # Update existing product
-                        serializer = VentasProductosCompraUpdateSerializer(existing_product, data=product_data, partial=True)
+                        serializer = VentasProductosCompraUpdateSerializer(
+                            existing_product, data=product_data, partial=True)
                         if serializer.is_valid():
                             producto = serializer.save()
                             created_products.append({
@@ -315,7 +465,8 @@ class VentasProductosCompraBulkCreateFromExcelView(APIView):
                             errors.append(error_msg)
                     else:
                         # Create new product
-                        serializer = VentasProductosCompraCreateSerializer(data=product_data)
+                        serializer = VentasProductosCompraCreateSerializer(
+                            data=product_data)
                         if serializer.is_valid():
                             producto = serializer.save()
                             created_products.append({
@@ -385,7 +536,71 @@ class VentasProductosCompraDownloadTemplateView(APIView):
 
         # Create Excel file in memory
         output = BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False,
+                        sheet_name='VentasProductosCompra')
+
+        output.seek(0)
+
+        # Create HTTP response
+        response = HttpResponse(
+            output.read(),
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        response[
+            'Content-Disposition'] = f'attachment; filename="ventas_productos_compra_template_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx"'
+
+        return response
+
+
+class VentasProductosCompraDownloadAllView(APIView):
+    """
+    View to download all VentasProductosCompra as an Excel file.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        """
+        Download all VentasProductosCompra as an Excel file.
+        """
+        # Get all products from database
+        productos = VentasProductosCompra.objects.all().order_by('code')
+
+        if not productos.exists():
+            return Response(
+                {'error': 'No products found in database'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Prepare data for Excel
+        data = []
+        for producto in productos:
+            # Convert homologated_names list to comma-separated string
+            homologated_names_str = ', '.join(producto.homologated_names) if producto.homologated_names else ''
+            
+            data.append({
+                'code': producto.code,
+                'name': producto.name,
+                'homologated_names': homologated_names_str,
+                'mililiters_per_unit': producto.mililiters_per_unit,
+                'box_units': producto.box_units,
+                'primary_can': producto.primary_can,
+                'returnable': producto.returnable,
+                'origen': producto.origen,
+                'cost_per_unit': producto.cost_per_unit,
+                'cost_per_box': producto.cost_per_box,
+                'cost_per_hectoliter': producto.cost_per_hectoliter,
+                'brand': producto.brand,
+                'category': producto.category,
+                'hectoliter_per_unit': producto.hectoliter_per_unit,
+                'hectoliter_box': producto.hectoliter_box,
+            })
+
+        df = pd.DataFrame(data)
+
+        # Create Excel file in memory
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, index=False, sheet_name='VentasProductosCompra')
 
         output.seek(0)
@@ -395,6 +610,6 @@ class VentasProductosCompraDownloadTemplateView(APIView):
             output.read(),
             content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         )
-        response['Content-Disposition'] = f'attachment; filename="ventas_productos_compra_template_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx"'
+        response['Content-Disposition'] = f'attachment; filename="ventas_productos_compra_all_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx"'
 
         return response

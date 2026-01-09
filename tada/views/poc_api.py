@@ -8,6 +8,8 @@ from django.http import HttpResponse
 import pandas as pd
 from io import BytesIO
 from datetime import datetime
+from tqdm import tqdm
+import unicodedata
 import json
 
 from tada.models import POC
@@ -17,6 +19,67 @@ from tada.serializers import (
     POCCreateSerializer,
     POCUpdateSerializer
 )
+
+
+def remove_accents(text):
+    """Remove accents from text."""
+    if not text:
+        return text
+    text = str(text)
+    nfd = unicodedata.normalize('NFD', text)
+    return ''.join([c for c in nfd if unicodedata.category(c) != 'Mn'])
+
+
+def clean_text(value):
+    """Clean text: remove accents, convert to lowercase, handle N/A."""
+    if pd.isna(value) or str(value).upper() in ['N/A', 'NA', 'NAN', 'NONE']:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    # Remove accents and convert to lowercase
+    text = remove_accents(text)
+    text = text.lower()
+    return text
+
+
+def clean_text_keep_case(value):
+    """Clean text: remove accents but keep original case, handle N/A."""
+    if pd.isna(value) or str(value).upper() in ['N/A', 'NA', 'NAN', 'NONE']:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    # Remove accents but keep case
+    text = remove_accents(text)
+    return text
+
+
+def clean_region(value):
+    """Clean and normalize region to valid choices."""
+    if pd.isna(value) or str(value).upper() in ['N/A', 'NA', 'NAN', 'NONE']:
+        return None
+    
+    value_str = str(value).strip().lower()
+    value_str = remove_accents(value_str)
+    
+    # Map different variations to valid regions
+    valid_regions = ['costa', 'sierra', 'oriente', 'insular']
+    
+    if value_str in valid_regions:
+        return value_str
+    
+    # Try to match variations
+    if value_str in ['litoral', 'costa region', 'region costa']:
+        return 'costa'
+    elif value_str in ['andes', 'andina', 'sierra region', 'region sierra']:
+        return 'sierra'
+    elif value_str in ['amazonia', 'oriente region', 'region oriente', 'oriental']:
+        return 'oriente'
+    elif value_str in ['galapagos', 'insular region', 'region insular', 'islas']:
+        return 'insular'
+    
+    return None
 
 
 class POCListCreateView(APIView):
@@ -181,33 +244,59 @@ class POCBulkCreateFromExcelView(APIView):
             created_pocs = []
             errors = []
 
-            for index, row in df.iterrows():
+            print(f"\n🔄 Processing {len(df)} POCs...")
+            for index, row in tqdm(df.iterrows(), total=len(df), desc="Creating/Updating POCs", unit="row"):
                 try:
-                    # Validate region
-                    region_value = str(row['region']).lower().strip()
-                    valid_regions = ['costa', 'sierra', 'oriente', 'insular']
-                    if region_value not in valid_regions:
-                        errors.append(f"Row {index+2}: Region must be one of: {', '.join(valid_regions)}")
+                    # Clean and validate id_poc (required)
+                    id_poc = str(row.get('id_poc', '')).strip().upper()
+                    if not id_poc or id_poc in ['N/A', 'NA', 'NAN', 'NONE']:
+                        error_msg = f"Row {index+2}: id_poc is required and cannot be empty"
+                        print(f"❌ {error_msg}")
+                        errors.append(error_msg)
                         continue
 
-                    # Validate required fields
-                    if pd.isna(row['id_poc']) or pd.isna(row['city']) or pd.isna(row['name']):
-                        errors.append(f"Row {index+2}: Required fields are empty")
+                    # Clean and validate city (required, keep case)
+                    city = clean_text_keep_case(row.get('city'))
+                    if not city:
+                        error_msg = f"Row {index+2}: city is required and cannot be empty"
+                        print(f"❌ {error_msg}")
+                        errors.append(error_msg)
                         continue
 
-                    # Process homologated_names
+                    # Clean and validate name (required, keep case)
+                    name = clean_text_keep_case(row.get('name'))
+                    if not name:
+                        error_msg = f"Row {index+2}: name is required and cannot be empty"
+                        print(f"❌ {error_msg}")
+                        errors.append(error_msg)
+                        continue
+
+                    # Clean and validate region (required)
+                    region = clean_region(row.get('region'))
+                    if not region:
+                        valid_regions = ['costa', 'sierra', 'oriente', 'insular']
+                        error_msg = f"Row {index+2}: region must be one of: {', '.join(valid_regions)}"
+                        print(f"❌ {error_msg}")
+                        errors.append(error_msg)
+                        continue
+
+                    # Process homologated_names (clean each name, keep case)
                     homologated_names = []
-                    if 'homologated_names' in row and not pd.isna(row['homologated_names']):
-                        # Split by comma and clean
-                        names_str = str(row['homologated_names'])
-                        homologated_names = [n.strip() for n in names_str.split(',') if n.strip()]
+                    if 'homologated_names' in row:
+                        raw_names = row.get('homologated_names')
+                        if not pd.isna(raw_names) and str(raw_names).upper() not in ['N/A', 'NA', 'NAN', 'NONE']:
+                            names_str = str(raw_names)
+                            homologated_names = [
+                                clean_text_keep_case(n) for n in names_str.split(',')
+                                if clean_text_keep_case(n)
+                            ]
 
                     # Prepare data
                     poc_data = {
-                        'id_poc': str(row['id_poc']).strip(),
-                        'city': str(row['city']).strip(),
-                        'name': str(row['name']).strip(),
-                        'region': region_value,
+                        'id_poc': id_poc,
+                        'city': city,
+                        'name': name,
+                        'region': region,
                         'homologated_names': homologated_names
                     }
 
@@ -229,7 +318,9 @@ class POCBulkCreateFromExcelView(APIView):
                                 'row': index + 2
                             })
                         else:
-                            errors.append(f"Row {index+2}: Validation error - {serializer.errors}")
+                            error_msg = f"Row {index+2}: Validation error - {serializer.errors}"
+                            print(f"❌ {error_msg}")
+                            errors.append(error_msg)
                     else:
                         # Create new POC
                         serializer = POCCreateSerializer(data=poc_data)
@@ -245,30 +336,28 @@ class POCBulkCreateFromExcelView(APIView):
                                 'row': index + 2
                             })
                         else:
-                            errors.append(f"Row {index+2}: Validation error - {serializer.errors}")
+                            error_msg = f"Row {index+2}: Validation error - {serializer.errors}"
+                            print(f"❌ {error_msg}")
+                            errors.append(error_msg)
 
                 except Exception as e:
-                    errors.append(f"Row {index+2}: Unexpected error - {str(e)}")
+                    error_msg = f"Row {index+2}: Unexpected error - {str(e)}"
+                    print(f"❌ {error_msg}")
+                    errors.append(error_msg)
 
             # Count the actions performed
             created_count = len([p for p in created_pocs if p.get('action') == 'created'])
             updated_count = len([p for p in created_pocs if p.get('action') == 'updated'])
 
-            response_data = {
-                'total_processed': len(created_pocs),
-                'created': created_count,
-                'updated': updated_count,
+            return Response({
+                'message': f'Process completed. {len(created_pocs)} POCs processed.',
+                'created_count': created_count,
+                'updated_count': updated_count,
                 'total_rows': len(df),
                 'errors_count': len(errors),
-                'results': created_pocs
-            }
-
-            if errors:
-                response_data['errors'] = errors
-
-            status_code = status.HTTP_201_CREATED if created_pocs else status.HTTP_400_BAD_REQUEST
-
-            return Response(response_data, status=status_code)
+                'results': created_pocs,
+                'errors': errors if errors else []
+            }, status=status.HTTP_201_CREATED if created_pocs else status.HTTP_400_BAD_REQUEST)
 
         except Exception as e:
             return Response(

@@ -58,3 +58,5 @@ dist/
 *.txt
 
 venv2/
+*.xlsx
+*.ipynb

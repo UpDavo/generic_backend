@@ -9,6 +9,8 @@ import pandas as pd
 from io import BytesIO
 from datetime import datetime
 from tqdm import tqdm
+import unicodedata
+import re
 
 from tada.models import VentasProductosApp, VentasProductosCompra, VentasProductosAppMaterial
 from tada.serializers import (
@@ -18,6 +20,59 @@ from tada.serializers import (
     VentasProductosAppUpdateSerializer,
     VentasProductosAppSimpleSerializer
 )
+
+
+def remove_accents(text):
+    """Remove accents from text."""
+    if not text:
+        return text
+    text = str(text)
+    nfd = unicodedata.normalize('NFD', text)
+    return ''.join([c for c in nfd if unicodedata.category(c) != 'Mn'])
+
+
+def clean_text(value):
+    """Clean text: remove accents, convert to lowercase, handle N/A."""
+    if pd.isna(value) or str(value).upper() in ['N/A', 'NA', 'NAN', 'NONE']:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    # Remove accents and convert to lowercase
+    text = remove_accents(text)
+    text = text.lower()
+    return text
+
+
+def clean_code(value):
+    """Clean code: can be text or numbers, uppercase, no accents."""
+    if pd.isna(value) or str(value).upper() in ['N/A', 'NA', 'NAN', 'NONE']:
+        return None
+    
+    code = str(value).strip()
+    if not code:
+        return None
+    
+    # Remove accents but keep uppercase
+    code = remove_accents(code)
+    return code.upper()
+
+
+def clean_product_type(value):
+    """Clean and normalize product type to 'principal' or 'combo'."""
+    if pd.isna(value) or str(value).upper() in ['N/A', 'NA', 'NAN', 'NONE']:
+        return None
+    
+    value_str = str(value).strip().lower()
+    value_str = remove_accents(value_str)
+    
+    # Map different variations to valid types
+    if value_str in ['combo', 'combo completo', 'combocompleto', 'combo_completo', 'combo compuesto', 'combocompuesto', 'combo_compuesto']:
+        return 'combo'
+    elif value_str in ['principal', 'simple', 'base']:
+        return 'principal'
+    
+    return None
 
 
 class VentasProductosAppListCreateView(APIView):
@@ -228,28 +283,45 @@ class VentasProductosAppBulkCreateFromExcelView(APIView):
             print(f"\n🔄 Processing {len(df)} products...")
             for index, row in tqdm(df.iterrows(), total=len(df), desc="Creating/Updating Products", unit="row"):
                 try:
-                    # Validate type
-                    type_value = str(row['type']).lower().strip()
+                    # Clean and validate type
+                    type_value = clean_product_type(row.get('type'))
                     
-                    if type_value not in ['principal', 'combo']:
+                    if not type_value:
                         error_msg = f"Row {index+2}: Type must be 'principal' or 'combo'"
                         print(f"❌ {error_msg}")
                         errors.append(error_msg)
                         continue
 
-                    # Validate required fields
-                    if pd.isna(row['code']) or pd.isna(row['name']):
-                        error_msg = f"Row {index+2}: Required fields are empty"
+                    # Clean and validate code (required)
+                    code = clean_code(row.get('code'))
+                    if not code:
+                        error_msg = f"Row {index+2}: Code is required and cannot be empty"
                         print(f"❌ {error_msg}")
                         errors.append(error_msg)
                         continue
 
+                    # Clean and validate name (required)
+                    name = clean_text(row.get('name'))
+                    if not name:
+                        error_msg = f"Row {index+2}: Name is required and cannot be empty"
+                        print(f"❌ {error_msg}")
+                        errors.append(error_msg)
+                        continue
+
+                    # Clean unit (default to 1)
+                    unit = 1
+                    if 'unit' in row and not pd.isna(row.get('unit')):
+                        try:
+                            unit = int(float(str(row.get('unit'))))
+                        except (ValueError, TypeError):
+                            unit = 1
+
                     # Prepare data
                     product_data = {
                         'type': type_value,
-                        'code': str(row['code']).strip(),
-                        'name': str(row['name']).strip(),
-                        'unit': int(row.get('unit', 1)) if not pd.isna(row.get('unit')) else 1,
+                        'code': code,
+                        'name': name,
+                        'unit': unit,
                     }
 
                     # Check if a product with this code already exists
@@ -286,23 +358,28 @@ class VentasProductosAppBulkCreateFromExcelView(APIView):
             print(f"\n🔄 Processing materials for combos...")
             for index, row in tqdm(df.iterrows(), total=len(df), desc="Adding Materials", unit="row"):
                 try:
-                    if pd.isna(row['code']):
+                    # Clean code
+                    code = clean_code(row.get('code'))
+                    if not code:
                         continue
 
-                    code = str(row['code']).strip()
                     producto = VentasProductosApp.objects.filter(code=code).first()
 
                     if not producto:
                         continue
 
                     # Process materials if present
-                    if 'materials' in row and not pd.isna(row['materials']):
-                        materials_str = str(row['materials'])
+                    materials_raw = row.get('materials')
+                    if 'materials' in row and not pd.isna(materials_raw) and str(materials_raw).upper() not in ['N/A', 'NA', 'NAN', 'NONE']:
+                        materials_str = str(materials_raw).strip()
+                        
+                        if not materials_str:
+                            continue
                         
                         # Clear existing materials
                         producto.material_items.all().delete()
                         
-                        # Parse materials: "CODE:QTY,CODE:QTY"
+                        # Parse materials: "CODE:QTY,CODE:QTY" format: 15997:5,17557:2,17555:2,17558:1
                         material_pairs = [m.strip() for m in materials_str.split(',') if m.strip()]
                         
                         for pair in material_pairs:
@@ -312,22 +389,34 @@ class VentasProductosAppBulkCreateFromExcelView(APIView):
                                 errors.append(error_msg)
                                 continue
                             
-                            material_code, quantity_str = pair.split(':', 1)
-                            material_code = material_code.strip()
+                            parts = pair.split(':', 1)
+                            material_code = parts[0].strip()
+                            quantity_str = parts[1].strip()
                             
+                            # Clean material code (uppercase)
+                            material_code = clean_code(material_code)
+                            if not material_code:
+                                error_msg = f"Row {index+2}: Invalid material code in '{pair}'"
+                                print(f"⚠️ {error_msg}")
+                                errors.append(error_msg)
+                                continue
+                            
+                            # Parse quantity
                             try:
-                                quantity = float(quantity_str.strip())
+                                # Handle comma as decimal separator
+                                quantity_str = quantity_str.replace(',', '.')
+                                quantity = float(quantity_str)
                             except ValueError:
                                 error_msg = f"Row {index+2}: Invalid quantity '{quantity_str}' for material '{material_code}'"
                                 print(f"⚠️ {error_msg}")
                                 errors.append(error_msg)
                                 continue
                             
-                            # Find material by code
+                            # Find material by code in VentasProductosCompra
                             material = VentasProductosCompra.objects.filter(code=material_code).first()
                             
                             if not material:
-                                error_msg = f"Row {index+2}: Material with code '{material_code}' not found"
+                                error_msg = f"Row {index+2}: Material with code '{material_code}' not found in VentasProductosCompra"
                                 print(f"⚠️ {error_msg}")
                                 errors.append(error_msg)
                                 continue
@@ -384,7 +473,7 @@ class VentasProductosAppDownloadTemplateView(APIView):
 
         # Create Excel file in memory
         output = BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, index=False, sheet_name='VentasProductosApp')
 
         output.seek(0)
@@ -395,5 +484,67 @@ class VentasProductosAppDownloadTemplateView(APIView):
             content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         )
         response['Content-Disposition'] = f'attachment; filename="ventas_productos_app_template_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx"'
+
+        return response
+
+
+class VentasProductosAppDownloadAllView(APIView):
+    """
+    View to download all VentasProductosApp as an Excel file.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        """
+        Download all VentasProductosApp as an Excel file with their materials.
+        """
+        # Get all products from database
+        productos = VentasProductosApp.objects.all().order_by('type', 'code')
+
+        if not productos.exists():
+            return Response(
+                {'error': 'No products found in database'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Prepare data for Excel
+        data = []
+        for producto in productos:
+            # Build materials string in format: CODE1:qty1,CODE2:qty2
+            materials_str = ''
+            if producto.type == 'combo':
+                materials = VentasProductosAppMaterial.objects.filter(
+                    ventas_productos_app=producto
+                ).select_related('ventas_productos_compra')
+                
+                materials_list = [
+                    f"{mat.ventas_productos_compra.code}:{mat.quantity}"
+                    for mat in materials
+                ]
+                materials_str = ','.join(materials_list)
+            
+            data.append({
+                'type': producto.type,
+                'code': producto.code,
+                'name': producto.name,
+                'unit': producto.unit,
+                'materials': materials_str,
+            })
+
+        df = pd.DataFrame(data)
+
+        # Create Excel file in memory
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='VentasProductosApp')
+
+        output.seek(0)
+
+        # Create HTTP response
+        response = HttpResponse(
+            output.read(),
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        response['Content-Disposition'] = f'attachment; filename="ventas_productos_app_all_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx"'
 
         return response

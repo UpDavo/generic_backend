@@ -127,6 +127,8 @@ urlpatterns = [
          name='ventas-productos-compra-bulk-create-excel'),
     path('ventas-productos-compra/download-template/', VentasProductosCompraDownloadTemplateView.as_view(),
          name='ventas-productos-compra-download-template'),
+    path('ventas-productos-compra/download-all/', VentasProductosCompraDownloadAllView.as_view(),
+         name='ventas-productos-compra-download-all'),
 
     # VentasProductosApp (CRUD completo)
     path('ventas-productos-app/', VentasProductosAppListCreateView.as_view(),
@@ -139,6 +141,8 @@ urlpatterns = [
          name='ventas-productos-app-bulk-create-excel'),
     path('ventas-productos-app/download-template/', VentasProductosAppDownloadTemplateView.as_view(),
          name='ventas-productos-app-download-template'),
+    path('ventas-productos-app/download-all/', VentasProductosAppDownloadAllView.as_view(),
+         name='ventas-productos-app-download-all'),
 
     # POC (CRUD completo)
     path('pocs/', POCListCreateView.as_view(),

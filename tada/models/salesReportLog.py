@@ -12,6 +12,13 @@ class SalesReportLog(BaseModel):
     rows_processed = models.IntegerField(default=0, help_text="Cantidad de filas procesadas")
     date = models.DateField(help_text="Fecha del procesamiento")
     time = models.TimeField(help_text="Hora del procesamiento")
+    processing_time_seconds = models.DecimalField(
+        max_digits=10,
+        decimal_places=3,
+        null=True,
+        blank=True,
+        help_text="Tiempo de procesamiento en segundos (para cálculo de precio)"
+    )
     app = models.CharField(max_length=50, help_text="App asociada (SALES)")
     user = models.ForeignKey(
         CustomUser,
