@@ -209,6 +209,13 @@ class SalesReportProcessorView(APIView):
                 content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
             )
             response['Content-Disposition'] = f'attachment; filename="{filename}"'
+            
+            # Agregar headers con estadísticas del procesamiento
+            response['X-Records-Created'] = str(saved_count)
+            response['X-Records-Updated'] = str(updated_count)
+            response['X-Records-Duplicated'] = str(duplicates_count)
+            response['X-Total-Processed'] = str(len(df))
+            response['X-Processing-Time'] = str(processing_duration)
 
             return response
 
