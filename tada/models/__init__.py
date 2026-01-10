@@ -8,8 +8,10 @@ from .trafficEvent import TrafficEvent
 from .trafficLog import TrafficLog
 from .executionLog import ExecutionLog
 from .dailyMeta import DailyMeta
+from .hectolitresDailyMeta import HectolitresDailyMeta
 from .webhookLog import WebhookLog
 from .ventasProductosCompra import VentasProductosCompra
 from .ventasProductosApp import VentasProductosApp, VentasProductosAppMaterial
 from .poc import POC
 from .salesReportLog import SalesReportLog
+from .salesRecord import SalesRecord

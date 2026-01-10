@@ -4,6 +4,7 @@ from .pocs_api import *
 from .canvas_api import *
 from .prices_api import *
 from .daily_meta_api import *
+from .hectolitres_daily_meta_api import *
 from .logs_stats_api import *
 from .traffic_api import *
 from .execution_api import *

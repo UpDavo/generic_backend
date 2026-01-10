@@ -71,6 +71,13 @@ urlpatterns = [
          name='webhook-logs-stats'),
     path('logs/combined-stats/', CombinedLogsStatsView.as_view(),
          name='combined-logs-stats'),
+    
+    #dinero consumido al procesar el reporte de ventas
+    path('sales-report-logs/stats/', SalesReportLogsStatsView.as_view(),
+         name='sales-report-logs-stats'),
+    #Dinero consumido al ver los records
+    path('sales-record/history/stats/', SalesRecordHistoryStatsView.as_view(),
+         name='sales-record-history-stats'),
 
     # Historial de precios por app
     path('prices/history/<str:app>/', PriceHistoryByAppView.as_view(),
@@ -108,13 +115,35 @@ urlpatterns = [
     path('daily-meta/bulk-create-excel/', DailyMetaBulkCreateFromExcelView.as_view(),
          name='daily-meta-bulk-create-excel'),
 
+    # Hectolitres Daily Meta (CRUD completo)
+    path('hectolitres-daily-meta/', HectolitresDailyMetaListCreateView.as_view(),
+         name='hectolitres-daily-meta-list-create'),
+    path('hectolitres-daily-meta/<int:pk>/',
+         HectolitresDailyMetaRetrieveUpdateDestroyView.as_view(), name='hectolitres-daily-meta-detail'),
+    path('hectolitres-daily-meta/bulk-create/', HectolitresDailyMetaBulkCreateView.as_view(),
+         name='hectolitres-daily-meta-bulk-create'),
+    path('hectolitres-daily-meta/bulk-create-excel/', HectolitresDailyMetaBulkCreateFromExcelView.as_view(),
+         name='hectolitres-daily-meta-bulk-create-excel'),
+
+    # Reporte hectolitros
+    path('hectolitres-daily-meta/weekly-report/', HectolitresWeeklyReportView.as_view(),
+         name='hectolitres-weekly-report'),
+    path('hectolitres-daily-meta/weekly-report/download/', HectolitresWeeklyReportDownloadView.as_view(),
+         name='hectolitres-weekly-report-download'),
+
     # Sales Report Processor
     path('sales-report/process/', SalesReportProcessorView.as_view(),
          name='sales-report-process'),
     path('sales-report-logs/', SalesReportLogsListView.as_view(),
          name='sales-report-logs-list'),
-    path('sales-report-logs/stats/', SalesReportLogsStatsView.as_view(),
-         name='sales-report-logs-stats'),
+    
+    
+    #Descargar y listar historico de procesamientos
+    path('sales-record/history/', SalesRecordHistoryListView.as_view(),
+         name='sales-record-history-list'),
+    path('sales-record/history/download/', SalesRecordHistoryDownloadView.as_view(),
+         name='sales-record-history-download'),
+    
 
     # VentasProductosCompra (CRUD completo)
     path('ventas-productos-compra/', VentasProductosCompraListCreateView.as_view(),
@@ -169,5 +198,5 @@ urlpatterns = [
          name='webhook-cancelled-update'),
     path('webhook/cancelled/download/', WebhookCancelledDownloadView.as_view(),
          name='webhook-cancelled-download'),
-    
+
 ]

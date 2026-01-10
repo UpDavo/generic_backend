@@ -13,6 +13,12 @@ from .daily_meta_serializer import (
     DailyMetaUpdateSerializer,
     DailyMetaListSerializer
 )
+from .hectolitres_daily_meta_serializer import (
+    HectolitresDailyMetaSerializer,
+    HectolitresDailyMetaCreateSerializer,
+    HectolitresDailyMetaUpdateSerializer,
+    HectolitresDailyMetaListSerializer
+)
 from .ventas_productos_compra_serializer import (
     VentasProductosCompraSerializer,
     VentasProductosCompraSimpleSerializer,

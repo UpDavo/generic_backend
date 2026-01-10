@@ -8,11 +8,11 @@ from django.db.models import Count, Q
 from django.utils.dateparse import parse_date
 import pandas as pd
 from io import BytesIO
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
-from django.utils.timezone import now
+from django.utils import timezone
 from django.conf import settings
-from tada.models import SalesReportLog, Price, AppPrice, POC, VentasProductosApp, VentasProductosCompra
+from tada.models import SalesReportLog, SalesRecord, Price, AppPrice, POC, VentasProductosApp, VentasProductosCompra
 from tada.utils.constants import APPS, APP_NAMES
 import numpy as np
 
@@ -81,17 +81,42 @@ class SalesReportProcessorView(APIView):
                 user=request.user
             )
 
-            # Generar el archivo Excel de salida con el consolidado
+            # Filtrar duplicados y obtener solo registros nuevos
+            if settings.DEBUG:
+                print(f"🔍 Filtrando duplicados...")
+
+            new_records_df, duplicates_count = self._filter_duplicates(
+                consolidated_df)
+
+            if settings.DEBUG:
+                print(f"   ✓ {len(new_records_df)} registros nuevos")
+                print(
+                    f"   ⚠️  {duplicates_count} registros duplicados (ya existen)")
+
+            # Guardar los registros nuevos en el histórico
+            if len(new_records_df) > 0:
+                if settings.DEBUG:
+                    print(
+                        f"💾 Guardando {len(new_records_df)} registros en histórico...")
+
+                saved_count = self._save_to_history(
+                    new_records_df, sales_log, request.user)
+
+                if settings.DEBUG:
+                    print(
+                        f"   ✓ {saved_count} registros guardados exitosamente")
+
+            # Generar el archivo Excel de salida con SOLO los registros nuevos
             output = BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                consolidated_df.to_excel(
-                    writer, index=False, sheet_name='Consolidado')
+                new_records_df.to_excel(
+                    writer, index=False, sheet_name='Registros Nuevos')
 
             output.seek(0)
 
             # Generar nombre de archivo con timestamp
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            filename = f'reporte_ventas_consolidado_{timestamp}.xlsx'
+            filename = f'reporte_ventas_nuevos_{timestamp}.xlsx'
 
             # Crear respuesta HTTP con el archivo Excel
             response = HttpResponse(
@@ -268,12 +293,194 @@ class SalesReportProcessorView(APIView):
             'dayname': 'nombre_dia',
             'year_month': 'año_mes'
         }
-        
+
         # Solo renombrar las columnas que existen en el DataFrame
-        columns_to_rename = {k: v for k, v in spanish_columns.items() if k in consolidated_df.columns}
+        columns_to_rename = {
+            k: v for k, v in spanish_columns.items() if k in consolidated_df.columns}
         consolidated_df = consolidated_df.rename(columns=columns_to_rename)
 
         return consolidated_df
+
+    def _filter_duplicates(self, df):
+        """
+        Filtrar registros duplicados comparando con el histórico.
+
+        Un registro es duplicado si ya existe en SalesRecord con la misma:
+        - date (fecha)
+        - store_name (tienda)
+        - sku_vtex (SKU del material final)
+
+        Args:
+            df: DataFrame con el consolidado procesado (en inglés, antes de renombrar)
+
+        Returns:
+            tuple: (DataFrame con solo registros nuevos, cantidad de duplicados encontrados)
+        """
+        if len(df) == 0:
+            return df, 0
+
+        # Asegurarnos de que las columnas necesarias existen
+        required_cols = ['date', 'store_name', 'sku_vtex']
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        if missing_cols:
+            if settings.DEBUG:
+                print(
+                    f"⚠️ Columnas faltantes para filtro de duplicados: {missing_cols}")
+            return df, 0
+
+        # Convertir date a datetime para comparación
+        df_check = df.copy()
+        if not pd.api.types.is_datetime64_any_dtype(df_check['date']):
+            df_check['date'] = pd.to_datetime(
+                df_check['date'], errors='coerce')
+
+        # OPTIMIZACIÓN 1: Obtener fechas únicas del DataFrame actual
+        # Esto reduce dramáticamente la query a la BD
+        unique_dates = df_check['date'].dropna().dt.date.unique()
+
+        if len(unique_dates) == 0:
+            # Si no hay fechas válidas, retornar todo como nuevo
+            return df, 0
+
+        if settings.DEBUG:
+            print(
+                f"   🔍 Buscando duplicados en {len(unique_dates)} fechas únicas...")
+
+        # OPTIMIZACIÓN 2: Query filtrada solo por las fechas del DataFrame
+        # En lugar de traer TODOS los registros históricos, solo traemos los relevantes
+        existing_records_query = SalesRecord.objects.filter(
+            deleted_at__isnull=True,
+            date__in=unique_dates  # ← Solo fechas del archivo actual
+        ).values_list('date', 'store_name', 'sku_vtex')
+
+        # OPTIMIZACIÓN 3: Crear set directamente en comprensión
+        existing_keys = {
+            f"{date}|{store_name}|{sku_vtex}"
+            for date, store_name, sku_vtex in existing_records_query
+        }
+
+        if settings.DEBUG and len(existing_keys) > 0:
+            print(
+                f"   📦 {len(existing_keys)} registros históricos en esas fechas")
+
+        # Convertir date a string para comparación
+        df_check['date_str'] = df_check['date'].dt.strftime('%Y-%m-%d')
+
+        # OPTIMIZACIÓN 4: Crear columna única usando vectorización
+        df_check['_unique_key'] = (
+            df_check['date_str'] + '|' +
+            df_check['store_name'].astype(str) + '|' +
+            df_check['sku_vtex'].astype(str)
+        )
+
+        # Marcar registros que YA existen (duplicados)
+        df_check['_is_duplicate'] = df_check['_unique_key'].isin(existing_keys)
+
+        # Contar duplicados
+        duplicates_count = df_check['_is_duplicate'].sum()
+
+        # Filtrar solo los registros NUEVOS (no duplicados)
+        new_records_mask = ~df_check['_is_duplicate']
+        new_records_df = df[new_records_mask].copy()
+
+        return new_records_df, int(duplicates_count)
+
+    def _save_to_history(self, df, sales_log, user):
+        """
+        Guardar registros del DataFrame en el histórico (modelo SalesRecord).
+
+        Args:
+            df: DataFrame con registros a guardar (en inglés, antes de renombrar)
+            sales_log: Instancia de SalesReportLog asociada
+            user: Usuario que procesó el reporte
+
+        Returns:
+            int: Cantidad de registros guardados
+        """
+        if len(df) == 0:
+            return 0
+
+        # Convertir DataFrame a lista de objetos SalesRecord
+        records_to_create = []
+
+        # Función auxiliar para convertir valores NaN/None a None
+        def safe_value(val):
+            if pd.isna(val):
+                return None
+            return val
+
+        # Función para convertir Decimal/float de pandas a Python
+        def safe_decimal(val):
+            if pd.isna(val):
+                return None
+            if isinstance(val, (np.integer, np.floating)):
+                return Decimal(str(float(val)))
+            return Decimal(str(val))
+
+        def safe_int(val):
+            if pd.isna(val):
+                return None
+            return int(val)
+
+        def safe_str(val):
+            if pd.isna(val):
+                return None
+            return str(val)
+
+        # Convertir date a datetime.date si es string
+        if 'date' in df.columns:
+            df['date'] = pd.to_datetime(df['date'], errors='coerce')
+
+        # Iterar sobre el DataFrame y crear objetos
+        for _, row in df.iterrows():
+            record = SalesRecord(
+                sales_log=sales_log,
+                user=user,
+                # Datos de identificación únicos
+                date=row['date'].date() if pd.notna(row['date']) else None,
+                store_name=safe_str(row.get('store_name')),
+                sku_vtex=safe_str(row.get('sku_vtex')),
+                # Datos de POC
+                poc_id=safe_str(row.get('poc_id')),
+                poc_name=safe_str(row.get('poc_name')),
+                poc_homolo=safe_str(row.get('poc_homolo')),
+                poc_city=safe_str(row.get('poc_city')),
+                poc_region=safe_str(row.get('poc_region')),
+                # Datos de producto padre
+                sku_padre=safe_str(row.get('sku_padre')),
+                nombre_padre=safe_str(row.get('nombre_padre')),
+                # Datos de transacción
+                orders=safe_int(row.get('orders', 0)),
+                units=safe_int(row.get('units', 0)),
+                # Datos de producto material
+                name=safe_str(row.get('name')),
+                name_homologated=safe_str(row.get('name_homologated')),
+                category=safe_str(row.get('category')),
+                brand=safe_str(row.get('brand')),
+                retornable=safe_str(row.get('retornable')),
+                # Métricas de ventas
+                units_assigned=safe_decimal(row.get('units_assigned')),
+                units_per_sku=safe_decimal(row.get('units_per_sku')),
+                unidades_por_caja=safe_int(row.get('unidades_por_caja')),
+                venta_pack=safe_decimal(row.get('venta_pack')),
+                mililitros=safe_decimal(row.get('mililitros')),
+                hectolitros=safe_decimal(row.get('hectolitros')),
+                dolars=safe_decimal(row.get('dolars')),
+                # Datos de fecha
+                week=safe_int(row.get('week')),
+                year=safe_int(row.get('year')),
+                month=safe_int(row.get('month')),
+                day=safe_int(row.get('day')),
+                dayname=safe_str(row.get('dayname')),
+                year_month=safe_str(row.get('year_month'))
+            )
+            records_to_create.append(record)
+
+        # Guardar en batch para mejor rendimiento
+        if records_to_create:
+            SalesRecord.objects.bulk_create(records_to_create, batch_size=500)
+
+        return len(records_to_create)
 
     def _enrich_with_poc_data(self, df):
         """
@@ -816,3 +1023,544 @@ class SalesReportLogsListView(APIView):
                 "error": "Error obteniendo logs de sales reports",
                 "details": str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class SalesRecordHistoryStatsView(APIView):
+    """
+    Vista para obtener estadísticas del histórico de SalesRecord con precios de tipo SALES_CHECK.
+    Similar a SalesReportLogsStatsView pero para el histórico completo.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def _get_price_for_period(self, app, start_date, end_date):
+        """
+        Obtener el precio promedio para un período específico.
+        """
+        # Obtener el primer día del mes de start_date y end_date
+        start_month = start_date.replace(day=1)
+        end_month = end_date.replace(day=1)
+
+        # Obtener todos los precios en el rango de meses
+        prices = Price.objects.filter(
+            app=app,
+            month__gte=start_month,
+            month__lte=end_month,
+            deleted_at__isnull=True
+        ).order_by('month')
+
+        if not prices.exists():
+            # Si no hay precios en el período, buscar el más reciente anterior
+            last_price = Price.objects.filter(
+                app=app,
+                month__lt=start_month,
+                deleted_at__isnull=True
+            ).order_by('-month').first()
+
+            if last_price:
+                return float(last_price.value)
+            return 0.0
+
+        # Si hay precios, calcular el promedio ponderado por días
+        total_days = (end_date - start_date).days + 1
+        weighted_sum = 0.0
+
+        for i, price in enumerate(prices):
+            # Determinar el rango de fechas para este precio
+            price_start = max(start_date, price.month)
+
+            # Determinar el final del período de este precio
+            if i < len(prices) - 1:
+                next_price_month = prices[i + 1].month
+                # El precio es válido hasta el día anterior al siguiente precio
+                price_end = min(end_date, next_price_month - timedelta(days=1))
+            else:
+                # Es el último precio, es válido hasta end_date
+                price_end = end_date
+
+            # Calcular días que este precio es válido
+            days_valid = (price_end - price_start).days + 1
+            if days_valid > 0:
+                weighted_sum += float(price.value) * days_valid
+
+        return weighted_sum / total_days if total_days > 0 else 0.0
+
+    def get(self, request):
+        """
+        Obtener estadísticas del histórico de ventas con cálculo de precio.
+        Query params opcionales:
+        - start_date: YYYY-MM-DD
+        - end_date: YYYY-MM-DD
+        - group_by: 'date' | 'week' | 'month' | 'user' (default: 'date')
+        """
+        try:
+            # Obtener parámetros de fecha
+            start_date_str = request.query_params.get('start_date')
+            end_date_str = request.query_params.get('end_date')
+            group_by = request.query_params.get('group_by', 'date')
+
+            # Query base
+            queryset = SalesRecord.objects.filter(deleted_at__isnull=True)
+
+            # Filtrar por fechas
+            if start_date_str:
+                start_date = parse_date(start_date_str)
+                if not start_date:
+                    return Response(
+                        {"error": "start_date inválido. Formato: YYYY-MM-DD"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                queryset = queryset.filter(date__gte=start_date)
+            else:
+                # Si no se especifica start_date, usar el primer registro
+                first_record = queryset.order_by('date').first()
+                start_date = first_record.date if first_record else timezone.now().date()
+
+            if end_date_str:
+                end_date = parse_date(end_date_str)
+                if not end_date:
+                    return Response(
+                        {"error": "end_date inválido. Formato: YYYY-MM-DD"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                queryset = queryset.filter(date__lte=end_date)
+            else:
+                # Si no se especifica end_date, usar hoy
+                end_date = timezone.now().date()
+
+            # Contar total de registros
+            total_records = queryset.count()
+
+            # Obtener precio promedio para el período usando SALES_CHECK
+            avg_price = self._get_price_for_period(
+                app=str(APPS['SALES_CHECK']),
+                start_date=start_date,
+                end_date=end_date
+            )
+
+            # Calcular precio total
+            total_price = Decimal(str(avg_price)) * Decimal(str(total_records))
+
+            # Preparar respuesta según agrupación
+            if group_by == 'user':
+                # Agrupar por usuario que creó el registro
+                stats_by_user = queryset.values('created_by__email').annotate(
+                    total_records=Count('id')
+                ).order_by('-total_records')
+
+                details = []
+                for item in stats_by_user:
+                    user_email = item['created_by__email'] or 'Sistema'
+                    record_count = item['total_records']
+                    user_price = Decimal(str(avg_price)) * \
+                        Decimal(str(record_count))
+
+                    details.append({
+                        'user': user_email,
+                        'total_records': record_count,
+                        'price_per_record': round(avg_price, 4),
+                        'total_price': round(float(user_price), 2)
+                    })
+
+            elif group_by == 'week':
+                # Agrupar por semana
+                stats_by_week = queryset.extra(
+                    select={
+                        'week': "EXTRACT(WEEK FROM date)", 'year': "EXTRACT(YEAR FROM date)"}
+                ).values('year', 'week').annotate(
+                    total_records=Count('id')
+                ).order_by('-year', '-week')
+
+                details = []
+                for item in stats_by_week:
+                    week_price = Decimal(str(avg_price)) * \
+                        Decimal(str(item['total_records']))
+                    details.append({
+                        'year': int(item['year']),
+                        'week': int(item['week']),
+                        'total_records': item['total_records'],
+                        'price_per_record': round(avg_price, 4),
+                        'total_price': round(float(week_price), 2)
+                    })
+
+            elif group_by == 'month':
+                # Agrupar por mes
+                stats_by_month = queryset.extra(
+                    select={
+                        'month': "EXTRACT(MONTH FROM date)", 'year': "EXTRACT(YEAR FROM date)"}
+                ).values('year', 'month').annotate(
+                    total_records=Count('id')
+                ).order_by('-year', '-month')
+
+                details = []
+                for item in stats_by_month:
+                    month_price = Decimal(str(avg_price)) * \
+                        Decimal(str(item['total_records']))
+                    details.append({
+                        'year': int(item['year']),
+                        'month': int(item['month']),
+                        'total_records': item['total_records'],
+                        'price_per_record': round(avg_price, 4),
+                        'total_price': round(float(month_price), 2)
+                    })
+
+            else:  # group_by == 'date' (default)
+                # Agrupar por fecha
+                stats_by_date = queryset.values('date').annotate(
+                    total_records=Count('id')
+                ).order_by('-date')
+
+                details = []
+                for item in stats_by_date:
+                    date_price = Decimal(str(avg_price)) * \
+                        Decimal(str(item['total_records']))
+                    details.append({
+                        'date': item['date'].strftime('%Y-%m-%d'),
+                        'total_records': item['total_records'],
+                        'price_per_record': round(avg_price, 4),
+                        'total_price': round(float(date_price), 2)
+                    })
+
+            response_data = {
+                'period': {
+                    'start_date': start_date.strftime('%Y-%m-%d'),
+                    'end_date': end_date.strftime('%Y-%m-%d'),
+                },
+                'summary': {
+                    'total_records': total_records,
+                    'price_per_record': round(avg_price, 4),
+                    'total_price': round(float(total_price), 2),
+                    'app': 'SALES_CHECK',
+                    'app_name': APP_NAMES[APPS['SALES_CHECK']],
+                    'group_by': group_by
+                },
+                'details': details
+            }
+
+            return Response(response_data, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response(
+                {"error": f"Error al obtener estadísticas: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class SalesRecordHistoryListView(APIView):
+    """
+    Vista para listar el histórico de ventas (SalesRecord) con paginación.
+    """
+    permission_classes = [IsAuthenticated]
+    pagination_class = PageNumberPagination
+
+    def get(self, request):
+        """
+        Obtiene la lista de registros de ventas con paginación.
+
+        Query params opcionales:
+        - start_date: Fecha inicial (YYYY-MM-DD)
+        - end_date: Fecha final (YYYY-MM-DD)
+        - poc_name: Filtrar por nombre de POC (búsqueda parcial)
+        - sku_vtex: Filtrar por SKU exacto
+        - page: Número de página (por defecto: 1)
+        - page_size: Tamaño de página (por defecto: 20, máximo: 100)
+        """
+        try:
+            # Obtener parámetros de filtro
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
+            poc_name = request.query_params.get('poc_name')
+            sku_vtex = request.query_params.get('sku_vtex')
+
+            # Construir query base
+            queryset = SalesRecord.objects.filter(
+                deleted_at__isnull=True
+            ).order_by('-date', '-created_at')
+
+            # Aplicar filtros
+            if start_date:
+                try:
+                    start_date_parsed = parse_date(start_date)
+                    if start_date_parsed:
+                        queryset = queryset.filter(date__gte=start_date_parsed)
+                except (ValueError, TypeError):
+                    pass
+
+            if end_date:
+                try:
+                    end_date_parsed = parse_date(end_date)
+                    if end_date_parsed:
+                        queryset = queryset.filter(date__lte=end_date_parsed)
+                except (ValueError, TypeError):
+                    pass
+
+            if poc_name:
+                queryset = queryset.filter(poc_name__icontains=poc_name)
+
+            if sku_vtex:
+                queryset = queryset.filter(sku_vtex=sku_vtex)
+
+            # Configurar paginación con tamaño personalizado
+            paginator = self.pagination_class()
+            page_size = request.query_params.get('page_size', 20)
+            try:
+                # Máximo 100 registros por página
+                page_size = min(int(page_size), 100)
+            except (ValueError, TypeError):
+                page_size = 20
+
+            paginator.page_size = page_size
+            paginated_queryset = paginator.paginate_queryset(queryset, request)
+
+            # Serializar resultados
+            results = []
+            for record in paginated_queryset:
+                results.append({
+                    'id': record.id,
+                    'date': record.date.strftime('%Y-%m-%d'),
+                    'store_name': record.store_name,
+                    'poc_id': record.poc_id,
+                    'poc_name': record.poc_name,
+                    'poc_homolo': record.poc_homolo,
+                    'poc_city': record.poc_city,
+                    'poc_region': record.poc_region,
+                    'sku_padre': record.sku_padre,
+                    'nombre_padre': record.nombre_padre,
+                    'sku_vtex': record.sku_vtex,
+                    'name': record.name,
+                    'name_homologated': record.name_homologated,
+                    'category': record.category,
+                    'brand': record.brand,
+                    'retornable': record.retornable,
+                    'orders': record.orders,
+                    'units': record.units,
+                    'units_assigned': float(record.units_assigned) if record.units_assigned else None,
+                    'units_per_sku': float(record.units_per_sku) if record.units_per_sku else None,
+                    'unidades_por_caja': float(record.unidades_por_caja) if record.unidades_por_caja else None,
+                    'venta_pack': record.venta_pack,
+                    'mililitros': float(record.mililitros) if record.mililitros else None,
+                    'hectolitros': float(record.hectolitros) if record.hectolitros else None,
+                    'dolars': float(record.dolars) if record.dolars else None,
+                    'week': record.week,
+                    'year': record.year,
+                    'month': record.month,
+                    'day': record.day,
+                    'dayname': record.dayname,
+                    'year_month': record.year_month,
+                    'created_at': record.created_at.isoformat()
+                })
+
+            # Retornar respuesta paginada
+            return paginator.get_paginated_response(results)
+
+        except Exception as e:
+            print(f"❌ Error obteniendo registros de ventas: {str(e)}")
+            return Response({
+                "error": "Error obteniendo registros de ventas",
+                "details": str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class SalesRecordHistoryDownloadView(APIView):
+    """
+    Vista para descargar el histórico de ventas (SalesRecord) en Excel filtrado por fechas.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        """
+        Descargar histórico de ventas en Excel filtrado por fechas y otros criterios.
+
+        Query params:
+        - start_date: Fecha inicial (YYYY-MM-DD) - opcional
+        - end_date: Fecha final (YYYY-MM-DD) - opcional
+        - poc_name: Filtrar por nombre de POC (búsqueda parcial) - opcional
+        - sku_vtex: Filtrar por SKU exacto - opcional
+
+        Si no se proporcionan fechas, descarga todos los registros (no recomendado para grandes volúmenes).
+        """
+        start_date = request.query_params.get('start_date')
+        end_date = request.query_params.get('end_date')
+        poc_name = request.query_params.get('poc_name')
+        sku_vtex = request.query_params.get('sku_vtex')
+
+        # Construir query base
+        queryset = SalesRecord.objects.filter(deleted_at__isnull=True)
+
+        # Aplicar filtros de fecha
+        if start_date:
+            try:
+                start_date_obj = parse_date(start_date)
+                if start_date_obj:
+                    queryset = queryset.filter(date__gte=start_date_obj)
+            except (ValueError, TypeError):
+                return Response(
+                    {'error': 'Formato de start_date inválido. Use YYYY-MM-DD'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        if end_date:
+            try:
+                end_date_obj = parse_date(end_date)
+                if end_date_obj:
+                    queryset = queryset.filter(date__lte=end_date_obj)
+            except (ValueError, TypeError):
+                return Response(
+                    {'error': 'Formato de end_date inválido. Use YYYY-MM-DD'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        # Aplicar filtros adicionales
+        if poc_name:
+            queryset = queryset.filter(poc_name__icontains=poc_name)
+
+        if sku_vtex:
+            queryset = queryset.filter(sku_vtex=sku_vtex)
+
+        # Ordenar por fecha
+        queryset = queryset.order_by('date', 'poc_name', 'sku_vtex')
+
+        # Limitar resultados para evitar timeouts (máximo 100,000 registros)
+        total_count = queryset.count()
+        if total_count > 100000:
+            return Response(
+                {
+                    'error': f'Demasiados registros ({total_count}). Por favor, use un rango de fechas más específico.',
+                    'suggestion': 'Intente filtrar por un máximo de 30 días'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if total_count == 0:
+            return Response(
+                {'error': 'No se encontraron registros para el rango de fechas especificado'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Obtener datos optimizados (solo campos necesarios)
+        records = queryset.values(
+            'date',
+            'store_name',
+            'poc_id',
+            'poc_name',
+            'poc_homolo',
+            'poc_city',
+            'poc_region',
+            'sku_padre',
+            'nombre_padre',
+            'sku_vtex',
+            'name',
+            'name_homologated',
+            'category',
+            'brand',
+            'retornable',
+            'orders',
+            'units',
+            'units_assigned',
+            'units_per_sku',
+            'unidades_por_caja',
+            'venta_pack',
+            'mililitros',
+            'hectolitros',
+            'dolars',
+            'week',
+            'year',
+            'month',
+            'day',
+            'dayname',
+            'year_month'
+        )
+
+        # Convertir a DataFrame
+        df = pd.DataFrame(list(records))
+
+        if df.empty:
+            return Response(
+                {'error': 'No se encontraron registros'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Renombrar columnas a español
+        df = df.rename(columns={
+            'date': 'fecha',
+            'store_name': 'tienda_original',
+            'poc_id': 'id_poc',
+            'poc_name': 'nombre_poc',
+            'poc_homolo': 'poc_homologado',
+            'poc_city': 'ciudad_poc',
+            'poc_region': 'region_poc',
+            'orders': 'pedidos',
+            'units': 'unidades',
+            'units_assigned': 'unidades_asignadas',
+            'units_per_sku': 'unidades_por_sku',
+            'dolars': 'dolares',
+            'week': 'semana',
+            'year': 'año',
+            'month': 'mes',
+            'day': 'dia',
+            'dayname': 'nombre_dia',
+            'year_month': 'año_mes',
+            'name': 'nombre',
+            'name_homologated': 'nombre_homologado',
+            'category': 'categoria',
+            'brand': 'marca'
+        })
+
+        # Crear log de la descarga con tipo SALES_CHECK
+        try:
+            SalesReportLog.objects.create(
+                filename=f'historico_ventas_{start_date or "all"}_{end_date or "all"}.xlsx',
+                rows_processed=len(df),
+                date=datetime.now().date(),
+                time=datetime.now().time(),
+                # No hay procesamiento, es consulta
+                processing_time_seconds=Decimal('0'),
+                app=str(APPS['SALES_CHECK']),
+                user=request.user
+            )
+        except Exception as e:
+            # No fallar la descarga si no se puede crear el log
+            print(f"⚠️ No se pudo crear log de descarga: {str(e)}")
+
+        # Generar archivo Excel
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='Histórico Ventas')
+
+            # Obtener worksheet para formato
+            worksheet = writer.sheets['Histórico Ventas']
+
+            # Auto-ajustar ancho de columnas
+            for column in worksheet.columns:
+                max_length = 0
+                column_letter = column[0].column_letter
+                for cell in column:
+                    try:
+                        if len(str(cell.value)) > max_length:
+                            max_length = len(str(cell.value))
+                    except:
+                        pass
+                adjusted_width = min(max_length + 2, 50)
+                worksheet.column_dimensions[column_letter].width = adjusted_width
+
+        output.seek(0)
+
+        # Generar nombre de archivo con timestamp y rango de fechas
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        date_range = ''
+        if start_date and end_date:
+            date_range = f'_{start_date}_a_{end_date}'
+        elif start_date:
+            date_range = f'_desde_{start_date}'
+        elif end_date:
+            date_range = f'_hasta_{end_date}'
+
+        filename = f'historico_ventas{date_range}_{timestamp}.xlsx'
+
+        # Crear respuesta HTTP con el archivo Excel
+        response = HttpResponse(
+            output.read(),
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+
+        return response

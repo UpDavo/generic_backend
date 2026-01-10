@@ -5,6 +5,7 @@ TRAFFIC = 3
 EXECUTION = 4
 WEBHOOK = 5
 SALES = 6
+SALES_CHECK = 7
 
 APP_NAMES = {
     PUSH: "Push",
@@ -13,6 +14,7 @@ APP_NAMES = {
     EXECUTION: "Execution",
     WEBHOOK: "Webhook",
     SALES: "Sales Report",
+    SALES_CHECK: "Sales Check",
 }
 
 APPS = {
@@ -22,6 +24,7 @@ APPS = {
     "EXECUTION": EXECUTION,
     "WEBHOOK": WEBHOOK,
     "SALES": SALES,
+    "SALES_CHECK": SALES_CHECK,
 }
 
 
