@@ -1449,11 +1449,11 @@ class SalesRecordHistoryStatsView(APIView):
         except AppPrice.DoesNotExist:
             pass
 
-        # Calcular costo basado en REGISTROS CONSULTADOS/DESCARGADOS
-        # El precio se interpreta como costo por registro
-        if price_instance and total_records_returned:
-            unit_price = Decimal(str(price_instance.value))  # precio por registro
-            total_cost = unit_price * Decimal(str(total_records_returned))
+        # Calcular costo basado en CANTIDAD DE CONSULTAS
+        # El precio se interpreta como costo por consulta
+        if price_instance and total_queries:
+            unit_price = Decimal(str(price_instance.value))  # precio por consulta
+            total_cost = unit_price * Decimal(str(total_queries))
             price_month = price_instance.month.strftime('%Y-%m')
         else:
             unit_price = Decimal('0')
@@ -1473,10 +1473,10 @@ class SalesRecordHistoryStatsView(APIView):
                 'total_records_returned': total_records_returned,
                 'app_name': APP_NAMES[APPS['SALES_CHECK']],
                 'app_price_name': app_price_name,
-                'unit_price_per_record': str(unit_price),
+                'unit_price_per_query': str(unit_price),
                 'total_cost': str(total_cost),
                 'price_month': price_month,
-                'pricing_model': 'per_record'
+                'pricing_model': 'per_query'
             },
             'breakdown': {
                 'by_user': list(logs_by_user),
