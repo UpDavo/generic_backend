@@ -12,7 +12,7 @@ from io import BytesIO
 from collections import defaultdict
 from decimal import Decimal
 
-from tada.models import HectolitresDailyMeta, SalesRecord, SalesReportLog
+from tada.models import HectolitresDailyMeta, SalesRecord, SalesRecordQueryLog
 from tada.utils.constants import APPS
 from tada.serializers import (
     HectolitresDailyMetaSerializer,
@@ -439,15 +439,21 @@ class HectolitresWeeklyReportView(APIView):
 
         # Crear log de la consulta con tipo SALES_CHECK
         try:
-            # Calcular cantidad de días consultados
-            total_days = sum(len(week['dates']) for week in date_ranges['weeks_data'])
+            # Calcular cantidad de registros consultados (días * ventas por día)
+            total_records = sum(len(week['dates']) for week in date_ranges['weeks_data'])
             
-            SalesReportLog.objects.create(
-                filename=f'consulta_hectolitros_{start_year}W{start_week}_{end_year}W{end_week}.json',
-                rows_processed=total_days,
+            SalesRecordQueryLog.objects.create(
+                query_type='list',
+                records_returned=total_records,
+                filters_applied={
+                    'start_year': start_year,
+                    'end_year': end_year,
+                    'start_week': start_week,
+                    'end_week': end_week,
+                    'report_type': 'hectolitres_weekly'
+                },
                 date=datetime.now().date(),
                 time=datetime.now().time(),
-                processing_time_seconds=Decimal('0'),  # No hay procesamiento, es consulta
                 app=str(APPS['SALES_CHECK']),
                 user=request.user
             )
@@ -735,12 +741,18 @@ class HectolitresWeeklyReportDownloadView(APIView):
 
         # Crear log de la descarga con tipo SALES_CHECK
         try:
-            SalesReportLog.objects.create(
-                filename=f'reporte_hectolitros_semanal_{start_year}W{start_week}_{end_year}W{end_week}.xlsx',
-                rows_processed=len(df),
+            SalesRecordQueryLog.objects.create(
+                query_type='download',
+                records_returned=len(df),
+                filters_applied={
+                    'start_year': start_year,
+                    'end_year': end_year,
+                    'start_week': start_week,
+                    'end_week': end_week,
+                    'report_type': 'hectolitres_weekly'
+                },
                 date=datetime.now().date(),
                 time=datetime.now().time(),
-                processing_time_seconds=Decimal('0'),  # No hay procesamiento, es consulta
                 app=str(APPS['SALES_CHECK']),
                 user=request.user
             )

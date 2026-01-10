@@ -15,3 +15,4 @@ from .ventasProductosApp import VentasProductosApp, VentasProductosAppMaterial
 from .poc import POC
 from .salesReportLog import SalesReportLog
 from .salesRecord import SalesRecord
+from .salesRecordQueryLog import SalesRecordQueryLog

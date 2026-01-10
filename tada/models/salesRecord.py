@@ -133,14 +133,9 @@ class SalesRecord(BaseModel):
             models.Index(fields=['sales_log']),
             models.Index(fields=['year', 'month']),
         ]
-        # Constraint para evitar duplicados: misma fecha + tienda + SKU material
-        constraints = [
-            models.UniqueConstraint(
-                fields=['date', 'store_name', 'sku_vtex'],
-                condition=models.Q(deleted_at__isnull=True),
-                name='unique_sale_record'
-            )
-        ]
+        # Sin constraint único - permitir múltiples registros del mismo material en la misma fecha/tienda
+        # (diferentes productos padre pueden contener el mismo material)
+        constraints = []
     
     def __str__(self):
         return f"Sale {self.date} - {self.store_name} - {self.sku_vtex} ({self.units_per_sku} units)"
