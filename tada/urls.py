@@ -144,6 +144,10 @@ urlpatterns = [
     path('sales-record/history/download/', SalesRecordHistoryDownloadView.as_view(),
          name='sales-record-history-download'),
     
+    # Último upload de ventas
+    path('sales-upload/last/', SalesUploadLogView.as_view(),
+         name='sales-upload-last'),
+    
 
     # VentasProductosCompra (CRUD completo)
     path('ventas-productos-compra/', VentasProductosCompraListCreateView.as_view(),

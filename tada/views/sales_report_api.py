@@ -13,11 +13,10 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from django.utils import timezone
 from django.conf import settings
-from tada.models import SalesReportLog, SalesRecord, SalesRecordQueryLog, Price, AppPrice, POC, VentasProductosApp, VentasProductosCompra
+from tada.models import SalesReportLog, SalesRecord, SalesRecordQueryLog, Price, AppPrice, POC, VentasProductosApp, VentasProductosCompra, SalesUploadLog
 from tada.utils.constants import APPS, APP_NAMES
 import numpy as np
 import time
-import zipfile
 
 
 class SalesReportProcessorView(APIView):
@@ -147,17 +146,36 @@ class SalesReportProcessorView(APIView):
                         traceback.print_exc()
                     raise
 
-            # Generar los archivos Excel de salida
+            # Crear log de upload con rango de fechas procesadas
+            if len(consolidated_df) > 0 and 'date' in consolidated_df.columns:
+                try:
+                    # Obtener rango de fechas de los datos procesados
+                    min_date = pd.to_datetime(consolidated_df['date']).min().date()
+                    max_date = pd.to_datetime(consolidated_df['date']).max().date()
+                    
+                    SalesUploadLog.objects.create(
+                        initrowdate=min_date,
+                        endrowdate=max_date,
+                        rows_count=saved_count + updated_count,
+                        user=request.user
+                    )
+                    
+                    if settings.DEBUG:
+                        print(f"📊 Upload log creado: desde {min_date} hasta {max_date}")
+                except Exception as e:
+                    if settings.DEBUG:
+                        print(f"⚠️ Error al crear upload log: {str(e)}")
+
+            # Generar archivo Excel de salida con múltiples sheets
             if settings.DEBUG:
-                print(f"📝 Generando archivo(s) Excel de salida...")
+                print(f"📝 Generando archivo Excel de salida...")
                 
             try:
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                output = BytesIO()
                 
-                # EXCEL 1: Registros procesados
-                output_processed = BytesIO()
-                with pd.ExcelWriter(output_processed, engine='openpyxl') as writer:
-                    # Renombrar columnas a español solo para el Excel
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    # SHEET 1: Registros procesados (nuevos)
                     spanish_columns = {
                         'poc_id': 'id_poc',
                         'poc_name': 'nombre_poc',
@@ -191,20 +209,12 @@ class SalesReportProcessorView(APIView):
                     
                     excel_df.to_excel(
                         writer, index=False, sheet_name='Registros Nuevos')
-
-                output_processed.seek(0)
-
-                if settings.DEBUG:
-                    print(f"   ✓ Excel de registros procesados generado correctamente")
-                
-                # Si hay registros no procesados, generar segundo Excel y crear ZIP
-                if len(unprocessed_df) > 0:
-                    if settings.DEBUG:
-                        print(f"   ⚠️  {len(unprocessed_df)} registros no procesados - generando Excel de errores...")
                     
-                    # EXCEL 2: Registros no procesados con error
-                    output_errors = BytesIO()
-                    with pd.ExcelWriter(output_errors, engine='openpyxl') as writer:
+                    # SHEET 2: Registros con errores (si existen)
+                    if len(unprocessed_df) > 0:
+                        if settings.DEBUG:
+                            print(f"   ⚠️  {len(unprocessed_df)} registros con errores - agregando sheet...")
+                        
                         # Renombrar columnas del DataFrame de errores a español
                         error_columns = {
                             'Date Hierarchy - Date': 'Fecha',
@@ -218,57 +228,41 @@ class SalesReportProcessorView(APIView):
                         excel_errors_df = unprocessed_df.copy()
                         excel_errors_df = excel_errors_df.rename(columns=error_columns)
                         excel_errors_df.to_excel(
-                            writer, index=False, sheet_name='Registros No Procesados')
-                    
-                    output_errors.seek(0)
-                    
-                    if settings.DEBUG:
-                        print(f"   ✓ Excel de errores generado correctamente")
-                    
-                    # Crear archivo ZIP con ambos excels
-                    zip_buffer = BytesIO()
-                    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-                        zip_file.writestr(f'reporte_ventas_nuevos_{timestamp}.xlsx', output_processed.read())
-                        zip_file.writestr(f'reporte_ventas_errores_{timestamp}.xlsx', output_errors.read())
-                    
-                    zip_buffer.seek(0)
-                    
-                    if settings.DEBUG:
-                        print(f"   ✓ Archivo ZIP generado con ambos excels")
-                    
-                    # Crear respuesta HTTP con el archivo ZIP
-                    response = HttpResponse(
-                        zip_buffer.read(),
-                        content_type='application/zip'
-                    )
-                    response['Content-Disposition'] = f'attachment; filename="reporte_ventas_{timestamp}.zip"'
-                else:
-                    # Solo hay registros procesados, devolver Excel único
-                    if settings.DEBUG:
-                        print(f"   ✓ Todos los registros procesados correctamente")
-                    
-                    response = HttpResponse(
-                        output_processed.read(),
-                        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-                    )
-                    response['Content-Disposition'] = f'attachment; filename="reporte_ventas_nuevos_{timestamp}.xlsx"'
-                
-                # Agregar headers con estadísticas del procesamiento
-                response['X-Records-Created'] = str(saved_count)
-                response['X-Records-Updated'] = str(updated_count)
-                response['X-Records-Duplicated'] = str(duplicates_count)
-                response['X-Records-Unprocessed'] = str(len(unprocessed_df))
-                response['X-Total-Processed'] = str(len(df))
-                response['X-Processing-Time'] = str(processing_duration)
+                            writer, index=False, sheet_name='Registros con Errores')
 
-                return response
-                
+                output.seek(0)
+
+                if settings.DEBUG:
+                    print(f"   ✓ Archivo Excel generado correctamente")
+                    if len(unprocessed_df) > 0:
+                        print(f"   ✓ Incluye sheet con {len(unprocessed_df)} registros con errores")
+                    
             except Exception as e:
                 if settings.DEBUG:
                     print(f"   ❌ ERROR al generar Excel: {str(e)}")
                     import traceback
                     traceback.print_exc()
                 raise
+
+            # Generar nombre de archivo con timestamp
+            filename = f'reporte_ventas_{timestamp}.xlsx'
+
+            # Crear respuesta HTTP con el archivo Excel
+            response = HttpResponse(
+                output.read(),
+                content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            )
+            response['Content-Disposition'] = f'attachment; filename="{filename}"'
+            
+            # Agregar headers con estadísticas del procesamiento
+            response['X-Records-Created'] = str(saved_count)
+            response['X-Records-Updated'] = str(updated_count)
+            response['X-Records-Duplicated'] = str(duplicates_count)
+            response['X-Records-Unprocessed'] = str(len(unprocessed_df))
+            response['X-Total-Processed'] = str(len(df))
+            response['X-Processing-Time'] = str(processing_duration)
+
+            return response
 
         except Exception as e:
             if settings.DEBUG:
@@ -1939,3 +1933,52 @@ class SalesRecordHistoryDownloadView(APIView):
         response['Content-Disposition'] = f'attachment; filename="{filename}"'
 
         return response
+
+
+class SalesUploadLogView(APIView):
+    """
+    Endpoint para consultar el último upload de ventas.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        """
+        Obtener información del último upload de ventas.
+        
+        Returns:
+            {
+                "last_upload": {
+                    "date_processed": "2026-01-15T14:30:00Z",
+                    "initrowdate": "2026-01-01",
+                    "endrowdate": "2026-01-05",
+                    "rows_count": 1500,
+                    "user": "john.doe@example.com"
+                }
+            }
+        """
+        last_upload = SalesUploadLog.objects.filter(
+            deleted_at__isnull=True
+        ).select_related('user').first()
+
+        if not last_upload:
+            return Response(
+                {
+                    "last_upload": None,
+                    "message": "No se han registrado uploads de ventas"
+                },
+                status=status.HTTP_200_OK
+            )
+
+        return Response(
+            {
+                "last_upload": {
+                    "id": last_upload.id,
+                    "date_processed": last_upload.date_processed,
+                    "initrowdate": last_upload.initrowdate,
+                    "endrowdate": last_upload.endrowdate,
+                    "rows_count": last_upload.rows_count,
+                    "user": last_upload.user.email if last_upload.user else None
+                }
+            },
+            status=status.HTTP_200_OK
+        )
