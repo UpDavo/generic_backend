@@ -17,6 +17,7 @@ from tada.models import SalesReportLog, SalesRecord, SalesRecordQueryLog, Price,
 from tada.utils.constants import APPS, APP_NAMES
 import numpy as np
 import time
+import zipfile
 
 
 class SalesReportProcessorView(APIView):
@@ -62,7 +63,7 @@ class SalesReportProcessorView(APIView):
                 print(f"📊 Archivo leído: {len(df)} filas encontradas")
 
             # Procesar los datos de ventas
-            consolidated_df = self._process_sales_data(df)
+            consolidated_df, unprocessed_df = self._process_sales_data(df)
 
             # Calcular tiempo de procesamiento
             end_time = time.time()
@@ -146,13 +147,16 @@ class SalesReportProcessorView(APIView):
                         traceback.print_exc()
                     raise
 
-            # Generar el archivo Excel de salida con SOLO los registros nuevos
+            # Generar los archivos Excel de salida
             if settings.DEBUG:
-                print(f"📝 Generando archivo Excel de salida...")
+                print(f"📝 Generando archivo(s) Excel de salida...")
                 
             try:
-                output = BytesIO()
-                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                
+                # EXCEL 1: Registros procesados
+                output_processed = BytesIO()
+                with pd.ExcelWriter(output_processed, engine='openpyxl') as writer:
                     # Renombrar columnas a español solo para el Excel
                     spanish_columns = {
                         'poc_id': 'id_poc',
@@ -188,36 +192,83 @@ class SalesReportProcessorView(APIView):
                     excel_df.to_excel(
                         writer, index=False, sheet_name='Registros Nuevos')
 
-                output.seek(0)
+                output_processed.seek(0)
 
                 if settings.DEBUG:
-                    print(f"   ✓ Archivo Excel generado correctamente")
+                    print(f"   ✓ Excel de registros procesados generado correctamente")
+                
+                # Si hay registros no procesados, generar segundo Excel y crear ZIP
+                if len(unprocessed_df) > 0:
+                    if settings.DEBUG:
+                        print(f"   ⚠️  {len(unprocessed_df)} registros no procesados - generando Excel de errores...")
+                    
+                    # EXCEL 2: Registros no procesados con error
+                    output_errors = BytesIO()
+                    with pd.ExcelWriter(output_errors, engine='openpyxl') as writer:
+                        # Renombrar columnas del DataFrame de errores a español
+                        error_columns = {
+                            'Date Hierarchy - Date': 'Fecha',
+                            'STORE_NAME': 'Nombre_Tienda',
+                            'product_spk': 'SKU_Producto',
+                            '# Units': 'Unidades',
+                            '# Orders': 'Pedidos',
+                            'error_reason': 'Motivo_Error'
+                        }
+                        
+                        excel_errors_df = unprocessed_df.copy()
+                        excel_errors_df = excel_errors_df.rename(columns=error_columns)
+                        excel_errors_df.to_excel(
+                            writer, index=False, sheet_name='Registros No Procesados')
+                    
+                    output_errors.seek(0)
+                    
+                    if settings.DEBUG:
+                        print(f"   ✓ Excel de errores generado correctamente")
+                    
+                    # Crear archivo ZIP con ambos excels
+                    zip_buffer = BytesIO()
+                    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                        zip_file.writestr(f'reporte_ventas_nuevos_{timestamp}.xlsx', output_processed.read())
+                        zip_file.writestr(f'reporte_ventas_errores_{timestamp}.xlsx', output_errors.read())
+                    
+                    zip_buffer.seek(0)
+                    
+                    if settings.DEBUG:
+                        print(f"   ✓ Archivo ZIP generado con ambos excels")
+                    
+                    # Crear respuesta HTTP con el archivo ZIP
+                    response = HttpResponse(
+                        zip_buffer.read(),
+                        content_type='application/zip'
+                    )
+                    response['Content-Disposition'] = f'attachment; filename="reporte_ventas_{timestamp}.zip"'
+                else:
+                    # Solo hay registros procesados, devolver Excel único
+                    if settings.DEBUG:
+                        print(f"   ✓ Todos los registros procesados correctamente")
+                    
+                    response = HttpResponse(
+                        output_processed.read(),
+                        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                    )
+                    response['Content-Disposition'] = f'attachment; filename="reporte_ventas_nuevos_{timestamp}.xlsx"'
+                
+                # Agregar headers con estadísticas del procesamiento
+                response['X-Records-Created'] = str(saved_count)
+                response['X-Records-Updated'] = str(updated_count)
+                response['X-Records-Duplicated'] = str(duplicates_count)
+                response['X-Records-Unprocessed'] = str(len(unprocessed_df))
+                response['X-Total-Processed'] = str(len(df))
+                response['X-Processing-Time'] = str(processing_duration)
+
+                return response
+                
             except Exception as e:
                 if settings.DEBUG:
                     print(f"   ❌ ERROR al generar Excel: {str(e)}")
                     import traceback
                     traceback.print_exc()
                 raise
-
-            # Generar nombre de archivo con timestamp
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            filename = f'reporte_ventas_nuevos_{timestamp}.xlsx'
-
-            # Crear respuesta HTTP con el archivo Excel
-            response = HttpResponse(
-                output.read(),
-                content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-            )
-            response['Content-Disposition'] = f'attachment; filename="{filename}"'
-            
-            # Agregar headers con estadísticas del procesamiento
-            response['X-Records-Created'] = str(saved_count)
-            response['X-Records-Updated'] = str(updated_count)
-            response['X-Records-Duplicated'] = str(duplicates_count)
-            response['X-Total-Processed'] = str(len(df))
-            response['X-Processing-Time'] = str(processing_duration)
-
-            return response
 
         except Exception as e:
             if settings.DEBUG:
@@ -257,6 +308,14 @@ class SalesReportProcessorView(APIView):
 
         # Filtrar el DataFrame para incluir solo las columnas requeridas
         consolidated_df = df[required_columns].copy()
+        
+        # Guardar las columnas originales para el reporte de errores
+        # Esto permitirá mostrar los datos originales cuando un SKU no se procese
+        consolidated_df['original_date'] = df['Date Hierarchy - Date']
+        consolidated_df['original_store_name'] = df['STORE_NAME']
+        consolidated_df['original_product_spk'] = df['product_spk']
+        consolidated_df['original_units'] = df['# Units']
+        consolidated_df['original_orders'] = df['# Orders']
 
         # Procesar la columna product_spk para extraer solo el valor después del ';'
         # Formato original: O1836;14581 -> solo queremos 14581
@@ -276,15 +335,27 @@ class SalesReportProcessorView(APIView):
         # Enriquecer datos con POC
         if settings.DEBUG:
             print(f"🏪 Enriqueciendo datos de POC...")
-        consolidated_df = self._enrich_with_poc_data(consolidated_df)
+        consolidated_df, unprocessed_poc_df = self._enrich_with_poc_data(consolidated_df)
+        if settings.DEBUG and len(unprocessed_poc_df) > 0:
+            print(f"   ⚠️  {len(unprocessed_poc_df)} registros sin POC encontrado")
 
         # Enriquecer datos con información de productos
         if settings.DEBUG:
             print(f"📦 Enriqueciendo datos de productos...")
-        consolidated_df = self._enrich_with_product_data(consolidated_df)
+        consolidated_df, unprocessed_products_df = self._enrich_with_product_data(consolidated_df)
         if settings.DEBUG:
             print(
                 f"   ✓ {len(consolidated_df)} filas después de expansión de materiales")
+            if len(unprocessed_products_df) > 0:
+                print(f"   ⚠️  {len(unprocessed_products_df)} registros no se pudieron procesar")
+        
+        # Combinar los DataFrames de errores de POC y productos
+        if len(unprocessed_poc_df) > 0 and len(unprocessed_products_df) > 0:
+            unprocessed_df = pd.concat([unprocessed_poc_df, unprocessed_products_df], ignore_index=True)
+        elif len(unprocessed_poc_df) > 0:
+            unprocessed_df = unprocessed_poc_df
+        else:
+            unprocessed_df = unprocessed_products_df
 
         # Enriquecer datos con información de fechas
         if settings.DEBUG:
@@ -344,6 +415,23 @@ class SalesReportProcessorView(APIView):
 
         consolidated_df = consolidated_df[existing_columns]
 
+        # FILTRO DE SEGURIDAD: Eliminar registros con campos críticos None
+        # Estos registros ya deberían estar en unprocessed_df, pero por si acaso
+        # filtramos cualquier registro que no tenga POC, SKU padre o nombre de producto
+        if settings.DEBUG:
+            original_count = len(consolidated_df)
+        
+        # Filtrar registros que NO tengan campos críticos
+        # Estos son registros que no pudieron ser procesados correctamente
+        critical_columns = ['poc_name', 'sku_padre', 'name']
+        for col in critical_columns:
+            if col in consolidated_df.columns:
+                consolidated_df = consolidated_df[consolidated_df[col].notna()]
+        
+        if settings.DEBUG and original_count != len(consolidated_df):
+            removed_count = original_count - len(consolidated_df)
+            print(f"⚠️ Se filtraron {removed_count} registros con datos incompletos")
+
         # Convertir todos los campos de texto a mayúsculas (vectorizado para mejor rendimiento)
         text_columns = ['poc_name', 'poc_homolo', 'poc_city', 'poc_region',
                         'sku_padre', 'nombre_padre', 'sku_vtex', 'name', 'name_homologated', 'category', 'brand', 'dayname']
@@ -369,7 +457,9 @@ class SalesReportProcessorView(APIView):
 
         # NO renombrar columnas aquí - mantener en inglés para filtrado y guardado
         # El renombrado a español se hará solo para el Excel de salida
-        return consolidated_df
+        
+        # Retornar también DataFrame vacío de no procesados (se llenará en _enrich_with_product_data)
+        return consolidated_df, pd.DataFrame()
 
     def _filter_duplicates(self, df):
         """
@@ -754,7 +844,7 @@ class SalesReportProcessorView(APIView):
             df: DataFrame con columna store_name
 
         Returns:
-            DataFrame enriquecido con datos de POC
+            tuple: (DataFrame enriquecido con datos de POC, DataFrame con registros sin POC encontrado)
         """
         # Obtener todos los POCs activos
         pocs = POC.objects.filter(deleted_at__isnull=True)
@@ -778,7 +868,7 @@ class SalesReportProcessorView(APIView):
                     'poc_region': poc.region
                 }
 
-        # Función para buscar POC
+        # Función para buscar POC y marcar si no se encuentra
         def find_poc(store_name):
             if pd.isna(store_name):
                 return pd.Series({
@@ -786,7 +876,8 @@ class SalesReportProcessorView(APIView):
                     'poc_name': None,
                     'poc_homolo': None,
                     'poc_city': None,
-                    'poc_region': None
+                    'poc_region': None,
+                    '_poc_not_found': True  # Marcar como no encontrado
                 })
 
             store_name_lower = str(store_name).lower().strip()
@@ -798,7 +889,8 @@ class SalesReportProcessorView(APIView):
                     'poc_name': poc_data['poc_name'],
                     'poc_homolo': store_name if store_name != poc_data['poc_name'] else None,
                     'poc_city': poc_data['poc_city'],
-                    'poc_region': poc_data['poc_region']
+                    'poc_region': poc_data['poc_region'],
+                    '_poc_not_found': False
                 })
             else:
                 return pd.Series({
@@ -806,14 +898,45 @@ class SalesReportProcessorView(APIView):
                     'poc_name': None,
                     'poc_homolo': store_name,
                     'poc_city': None,
-                    'poc_region': None
+                    'poc_region': None,
+                    '_poc_not_found': True  # Marcar como no encontrado
                 })
 
         # Aplicar la búsqueda de POC
         poc_data = df['store_name'].apply(find_poc)
         df = pd.concat([df, poc_data], axis=1)
+        
+        # Separar registros sin POC encontrado
+        if '_poc_not_found' in df.columns:
+            poc_not_found_mask = df['_poc_not_found'] == True
+            unprocessed_poc_df = df[poc_not_found_mask].copy()
+            
+            if len(unprocessed_poc_df) > 0:
+                # Agregar columna de error
+                unprocessed_poc_df['error_reason'] = unprocessed_poc_df['store_name'].apply(
+                    lambda x: f'POC no encontrado: {x}' if pd.notna(x) else 'POC no encontrado: store_name vacío'
+                )
+                
+                # Mapear a columnas originales del Excel si existen
+                if 'original_date' in unprocessed_poc_df.columns:
+                    unprocessed_poc_df['Date Hierarchy - Date'] = unprocessed_poc_df['original_date']
+                    unprocessed_poc_df['STORE_NAME'] = unprocessed_poc_df['original_store_name']
+                    unprocessed_poc_df['product_spk'] = unprocessed_poc_df['original_product_spk']
+                    unprocessed_poc_df['# Units'] = unprocessed_poc_df['original_units']
+                    unprocessed_poc_df['# Orders'] = unprocessed_poc_df['original_orders']
+                    
+                    unprocessed_poc_df = unprocessed_poc_df[[
+                        'Date Hierarchy - Date', 'STORE_NAME', 'product_spk', 
+                        '# Units', '# Orders', 'error_reason'
+                    ]]
+            
+            # Filtrar registros con POC encontrado para continuar procesamiento
+            df = df[~poc_not_found_mask].copy()
+            df = df.drop('_poc_not_found', axis=1)
+        else:
+            unprocessed_poc_df = pd.DataFrame()
 
-        return df
+        return df, unprocessed_poc_df
 
     def _enrich_with_product_data(self, df):
         """
@@ -829,7 +952,7 @@ class SalesReportProcessorView(APIView):
             df: DataFrame con columna sku
 
         Returns:
-            DataFrame enriquecido con datos de productos (puede tener más filas que el original)
+            tuple: (DataFrame enriquecido con datos de productos, DataFrame con registros no procesados)
         """
         # Obtener todos los productos App activos con sus materiales (optimizado con only)
         products_app = VentasProductosApp.objects.filter(
@@ -868,6 +991,7 @@ class SalesReportProcessorView(APIView):
         df['sku_str'] = df['sku'].astype(str)
 
         expanded_rows = []
+        unprocessed_rows = []  # Lista para registros no procesados
 
         # Convertir a diccionario de columnas para acceso rápido
         df_dict = df.to_dict('records')
@@ -937,62 +1061,20 @@ class SalesReportProcessorView(APIView):
 
                             expanded_rows.append(new_row)
                         else:
-                            # Material no encontrado en productos_compra
-                            new_row = row_dict.copy()
-                            new_row['sku_padre'] = sku
-                            new_row['nombre_padre'] = product_app.name
-                            new_row['sku_vtex'] = material_code
-                            new_row['name'] = None
-                            new_row['name_homologated'] = None
-                            new_row['category'] = None
-                            new_row['brand'] = None
-                            new_row['retornable'] = None
-                            new_row['mililitros'] = None
-                            new_row['unidades_por_caja'] = None
-                            new_row['units_assigned'] = None
-                            new_row['units_per_sku'] = None
-                            new_row['venta_pack'] = None
-                            new_row['hectolitros'] = None
-                            new_row['dolars'] = None
-                            expanded_rows.append(new_row)
+                            # Material no encontrado en productos_compra - REGISTRAR ERROR
+                            error_row = row_dict.copy()
+                            error_row['error_reason'] = f'SKU hijo (material) no encontrado: {material_code}'
+                            unprocessed_rows.append(error_row)
                 else:
-                    # Producto encontrado pero sin materiales (caso raro)
-                    new_row = row_dict.copy()
-                    new_row['sku_padre'] = sku
-                    new_row['nombre_padre'] = product_app.name
-                    new_row['sku_vtex'] = sku
-                    new_row['name'] = None
-                    new_row['name_homologated'] = None
-                    new_row['category'] = None
-                    new_row['brand'] = None
-                    new_row['retornable'] = None
-                    new_row['mililitros'] = None
-                    new_row['unidades_por_caja'] = None
-                    new_row['units_assigned'] = None
-                    new_row['units_per_sku'] = None
-                    new_row['venta_pack'] = None
-                    new_row['hectolitros'] = None
-                    new_row['dolars'] = None
-                    expanded_rows.append(new_row)
+                    # Producto encontrado pero sin materiales (caso raro) - REGISTRAR ERROR
+                    error_row = row_dict.copy()
+                    error_row['error_reason'] = f'SKU padre encontrado pero sin materiales asociados: {sku}'
+                    unprocessed_rows.append(error_row)
             else:
-                # SKU no encontrado en productos_app
-                new_row = row_dict.copy()
-                new_row['sku_padre'] = sku
-                new_row['nombre_padre'] = None
-                new_row['sku_vtex'] = sku
-                new_row['name'] = None
-                new_row['name_homologated'] = None
-                new_row['category'] = None
-                new_row['brand'] = None
-                new_row['retornable'] = None
-                new_row['mililitros'] = None
-                new_row['unidades_por_caja'] = None
-                new_row['units_assigned'] = None
-                new_row['units_per_sku'] = None
-                new_row['venta_pack'] = None
-                new_row['hectolitros'] = None
-                new_row['dolars'] = None
-                expanded_rows.append(new_row)
+                # SKU no encontrado en productos_app - REGISTRAR ERROR
+                error_row = row_dict.copy()
+                error_row['error_reason'] = f'SKU padre no encontrado en productos_app: {sku}'
+                unprocessed_rows.append(error_row)
 
         # Crear nuevo DataFrame con las filas expandidas
         if expanded_rows:
@@ -1003,8 +1085,31 @@ class SalesReportProcessorView(APIView):
         # Limpiar columna temporal
         if 'sku_str' in expanded_df.columns:
             expanded_df = expanded_df.drop('sku_str', axis=1)
+        
+        # Crear DataFrame de registros no procesados (manteniendo columnas originales del Excel)
+        if unprocessed_rows:
+            unprocessed_df = pd.DataFrame(unprocessed_rows)
+            
+            # Mapear a las columnas originales del Excel
+            if 'original_date' in unprocessed_df.columns:
+                unprocessed_df['Date Hierarchy - Date'] = unprocessed_df['original_date']
+                unprocessed_df['STORE_NAME'] = unprocessed_df['original_store_name']
+                unprocessed_df['product_spk'] = unprocessed_df['original_product_spk']
+                unprocessed_df['# Units'] = unprocessed_df['original_units']
+                unprocessed_df['# Orders'] = unprocessed_df['original_orders']
+                
+                # Mantener solo las columnas originales del Excel + error_reason
+                unprocessed_df = unprocessed_df[['Date Hierarchy - Date', 'STORE_NAME', 'product_spk', '# Units', '# Orders', 'error_reason']]
+            else:
+                # Fallback si no hay columnas originales
+                original_columns = ['date', 'store_name', 'sku', 'units', 'orders']
+                cols_to_keep = [col for col in original_columns if col in unprocessed_df.columns]
+                cols_to_keep.append('error_reason')
+                unprocessed_df = unprocessed_df[cols_to_keep]
+        else:
+            unprocessed_df = pd.DataFrame()
 
-        return expanded_df
+        return expanded_df, unprocessed_df
 
     def _enrich_with_date_data(self, df):
         """
