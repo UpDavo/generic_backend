@@ -1,1 +1,1 @@
-web: gunicorn back_end_django.wsgi
+web: gunicorn back_end_django.wsgi --workers=4 --threads=2 --timeout=300 --max-requests=1000 --max-requests-jitter=50

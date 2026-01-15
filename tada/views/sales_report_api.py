@@ -60,6 +60,18 @@ class SalesReportProcessorView(APIView):
 
             if settings.DEBUG:
                 print(f"📊 Archivo leído: {len(df)} filas encontradas")
+            
+            # VALIDACIÓN: Advertir si hay demasiados registros
+            if len(df) > 50000:
+                if settings.DEBUG:
+                    print(f"⚠️  ADVERTENCIA: {len(df)} filas a procesar. Esto puede tomar varios minutos.")
+            
+            # LÍMITE DE SEGURIDAD: Rechazar archivos extremadamente grandes
+            if len(df) > 300000:
+                return Response(
+                    {'error': f'El archivo contiene {len(df)} filas. El límite máximo es 200,000 filas. Por favor, divida el archivo en partes más pequeñas.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
             # Procesar los datos de ventas
             consolidated_df, unprocessed_df = self._process_sales_data(df)
@@ -147,24 +159,35 @@ class SalesReportProcessorView(APIView):
                     raise
 
             # Crear log de upload con rango de fechas procesadas
-            if len(consolidated_df) > 0 and 'date' in consolidated_df.columns:
+            # Usar new_records_df y update_records_df que tienen los datos de fecha
+            if (saved_count > 0 or updated_count > 0):
                 try:
-                    # Obtener rango de fechas de los datos procesados
-                    min_date = pd.to_datetime(consolidated_df['date']).min().date()
-                    max_date = pd.to_datetime(consolidated_df['date']).max().date()
+                    # Obtener rango de fechas de los datos procesados exitosamente
+                    # Combinar new_records y update_records para obtener el rango completo
+                    date_dfs = []
+                    if len(new_records_df) > 0 and 'date' in new_records_df.columns:
+                        date_dfs.append(new_records_df['date'])
+                    if len(update_records_df) > 0 and 'date' in update_records_df.columns:
+                        date_dfs.append(update_records_df['date'])
                     
-                    SalesUploadLog.objects.create(
-                        initrowdate=min_date,
-                        endrowdate=max_date,
-                        rows_count=saved_count + updated_count,
-                        user=request.user
-                    )
-                    
-                    if settings.DEBUG:
-                        print(f"📊 Upload log creado: desde {min_date} hasta {max_date}")
+                    if date_dfs:
+                        all_dates = pd.concat(date_dfs)
+                        min_date = pd.to_datetime(all_dates).min().date()
+                        max_date = pd.to_datetime(all_dates).max().date()
+                        
+                        SalesUploadLog.objects.create(
+                            initrowdate=min_date,
+                            endrowdate=max_date,
+                            rows_count=saved_count + updated_count,
+                            user=request.user
+                        )
+                        
+                        if settings.DEBUG:
+                            print(f"📊 Upload log creado: desde {min_date} hasta {max_date}")
                 except Exception as e:
+                    # No fallar si la tabla no existe aún (migración pendiente)
                     if settings.DEBUG:
-                        print(f"⚠️ Error al crear upload log: {str(e)}")
+                        print(f"⚠️ Error al crear upload log (puede que falte migración): {str(e)}")
 
             # Generar archivo Excel de salida con múltiples sheets
             if settings.DEBUG:
@@ -606,6 +629,7 @@ class SalesReportProcessorView(APIView):
     def _save_to_history(self, df, sales_log, user):
         """
         Guardar registros del DataFrame en el histórico (modelo SalesRecord).
+        Procesa en chunks para manejar grandes volúmenes de datos.
 
         Args:
             df: DataFrame con registros a guardar (en inglés, antes de renombrar)
@@ -617,6 +641,12 @@ class SalesReportProcessorView(APIView):
         """
         if len(df) == 0:
             return 0
+        
+        total_rows = len(df)
+        if settings.DEBUG:
+            print(f"💾 Guardando {total_rows} registros en histórico...")
+            if total_rows > 10000:
+                print(f"   ⏱️  Esto puede tomar unos minutos...")
 
         # Convertir DataFrame a lista de objetos SalesRecord
         records_to_create = []
@@ -695,16 +725,25 @@ class SalesReportProcessorView(APIView):
             records_to_create.append(record)
 
         # Guardar en batch para mejor rendimiento
+        # Procesar en chunks para evitar problemas de memoria
         if records_to_create:
-            SalesRecord.objects.bulk_create(
-                records_to_create, 
-                batch_size=500
-            )
+            total_saved = 0
+            chunk_size = 1000  # Chunks más pequeños para mejor manejo de memoria
+            total_chunks = (len(records_to_create) + chunk_size - 1) // chunk_size
+            
+            for i in range(0, len(records_to_create), chunk_size):
+                chunk = records_to_create[i:i + chunk_size]
+                SalesRecord.objects.bulk_create(chunk, batch_size=500)
+                total_saved += len(chunk)
+                
+                if settings.DEBUG and total_chunks > 1:
+                    current_chunk = (i // chunk_size) + 1
+                    print(f"   📊 Progreso: {total_saved}/{len(records_to_create)} registros ({int(total_saved/len(records_to_create)*100)}%)")
             
             if settings.DEBUG:
-                print(f"   ✅ {len(records_to_create)} registros insertados exitosamente")
+                print(f"   ✅ {total_saved} registros insertados exitosamente")
             
-            return len(records_to_create)
+            return total_saved
 
         return 0
 
@@ -809,15 +848,27 @@ class SalesReportProcessorView(APIView):
                 if settings.DEBUG:
                     print(f"   🔄 Actualizando ID {existing_id}: {', '.join(changes_detail)}")
 
-        # Realizar actualización en batch
+        # Realizar actualización en batch con chunks para grandes volúmenes
         if records_to_update:
             try:
-                SalesRecord.objects.bulk_update(
-                    records_to_update,
-                    ['units', 'hectolitros', 'orders', 'dolars'],
-                    batch_size=500
-                )
-                updated_count = len(records_to_update)
+                total_to_update = len(records_to_update)
+                chunk_size = 1000
+                total_updated = 0
+                
+                # Procesar en chunks
+                for i in range(0, total_to_update, chunk_size):
+                    chunk = records_to_update[i:i + chunk_size]
+                    SalesRecord.objects.bulk_update(
+                        chunk,
+                        ['units', 'hectolitros', 'orders', 'dolars'],
+                        batch_size=500
+                    )
+                    total_updated += len(chunk)
+                    
+                    if settings.DEBUG and total_to_update > chunk_size:
+                        print(f"   📊 Progreso actualización: {total_updated}/{total_to_update} ({int(total_updated/total_to_update*100)}%)")
+                
+                updated_count = total_updated
                 
                 if settings.DEBUG:
                     print(f"   ✅ {updated_count} registros actualizados exitosamente")
