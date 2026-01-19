@@ -17,7 +17,7 @@ class HectolitresDailyMeta(BaseModel):
     )
     target_hectolitres = models.DecimalField(
         max_digits=10,
-        decimal_places=2,
+        decimal_places=3,
         validators=[MinValueValidator(Decimal('0'))],
         help_text="Meta de hectolitros esperada para el día"
     )

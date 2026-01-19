@@ -10,7 +10,7 @@ from django.shortcuts import get_object_or_404
 import pandas as pd
 from io import BytesIO
 from collections import defaultdict
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from tada.models import HectolitresDailyMeta, SalesRecord, SalesRecordQueryLog
 from tada.utils.constants import APPS
@@ -263,8 +263,9 @@ class HectolitresDailyMetaBulkCreateFromExcelView(APIView):
                         continue
 
                     try:
-                        target_hectolitres = float(goal_value)
-                    except (ValueError, TypeError):
+                        # Usar Decimal para mantener precisión de 3 decimales
+                        target_hectolitres = Decimal(str(goal_value)).quantize(Decimal('0.001'))
+                    except (ValueError, TypeError, InvalidOperation):
                         errors.append(
                             f"Fila {index+2}: Meta debe ser un número válido")
                         continue
@@ -643,8 +644,8 @@ class HectolitresWeeklyReportView(APIView):
                 week_response[day_name] = {
                     'dia': day_data['day_number'],
                     'fecha': current_date.strftime('%Y-%m-%d'),
-                    'ht': float(ht_vendidos),
-                    'ht_meta': float(ht_meta),
+                    'ht': round(float(ht_vendidos), 3),
+                    'ht_meta': round(float(ht_meta), 3),
                     'cumplimiento': cumplimiento_str
                 }
 
@@ -660,8 +661,8 @@ class HectolitresWeeklyReportView(APIView):
         # Agregar totales al inicio
         response = {
             'total': {
-                'ht_vendidos': float(total_ht_vendidos),
-                'ht_meta': float(total_ht_meta),
+                'ht_vendidos': round(float(total_ht_vendidos), 3),
+                'ht_meta': round(float(total_ht_meta), 3),
                 'cumplimiento': cumplimiento_total_str
             },
             **response
@@ -963,8 +964,8 @@ class HectolitresWeeklyReportDownloadView(APIView):
                     'Día Semana': day_name,
                     'Fecha': current_date.strftime('%Y-%m-%d'),
                     'Día': day_data['day_number'],
-                    'Hectolitros Vendidos': float(ht_vendidos),
-                    'Hectolitros Meta': float(ht_meta),
+                    'Hectolitros Vendidos': round(float(ht_vendidos), 3),
+                    'Hectolitros Meta': round(float(ht_meta), 3),
                     'Cumplimiento %': cumplimiento_pct
                 })
 
@@ -984,8 +985,8 @@ class HectolitresWeeklyReportDownloadView(APIView):
             'Día Semana': '',
             'Fecha': '',
             'Día': '',
-            'Hectolitros Vendidos': float(total_ht_vendidos),
-            'Hectolitros Meta': float(total_ht_meta),
+            'Hectolitros Vendidos': round(float(total_ht_vendidos), 3),
+            'Hectolitros Meta': round(float(total_ht_meta), 3),
             'Cumplimiento %': cumplimiento_total_pct
         }])
 
