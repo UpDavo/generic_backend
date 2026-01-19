@@ -361,13 +361,14 @@ class HectolitresWeeklyReportView(APIView):
 
     def get(self, request):
         """
-        Obtener reporte de hectolitros filtrado por año y semana.
+        Obtener reporte de hectolitros o cajas filtrado por año y semana.
 
         Query params:
         - start_year: Año inicial (requerido)
         - end_year: Año final (requerido)
         - start_week: Semana inicial (requerido, 1-53)
         - end_week: Semana final (requerido, 1-53)
+        - report_type: "hectolitros" o "caja" (opcional, default: hectolitros)
 
         Returns:
         {
@@ -399,6 +400,14 @@ class HectolitresWeeklyReportView(APIView):
                 {'error': 'Se requieren parámetros válidos: start_year, end_year, start_week, end_week'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+        
+        # Validar parámetro report_type (opcional)
+        report_type = request.query_params.get('report_type', 'hectolitros').strip().lower()
+        if report_type not in ['hectolitros', 'caja']:
+            return Response(
+                {'error': 'report_type debe ser "hectolitros" o "caja" (opcional, default: hectolitros)'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         # Validar rangos
         if start_week < 1 or start_week > 53 or end_week < 1 or end_week > 53:
@@ -423,9 +432,9 @@ class HectolitresWeeklyReportView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Obtener ventas agrupadas por fecha (sumar hectolitros)
+        # Obtener ventas agrupadas por fecha (sumar hectolitros o cajas)
         sales_by_date = self._get_sales_by_date(
-            date_ranges['start_date'], date_ranges['end_date'])
+            date_ranges['start_date'], date_ranges['end_date'], report_type)
 
         # Obtener metas por fecha
         metas_by_date = self._get_metas_by_date(
@@ -451,7 +460,7 @@ class HectolitresWeeklyReportView(APIView):
                     'end_year': end_year,
                     'start_week': start_week,
                     'end_week': end_week,
-                    'report_type': 'hectolitres_weekly'
+                    'report_type': f'hectolitres_weekly_{report_type}'
                 },
                 date=datetime.now().date(),
                 time=datetime.now().time(),
@@ -561,21 +570,40 @@ class HectolitresWeeklyReportView(APIView):
         except (ValueError, OverflowError):
             return None
 
-    def _get_sales_by_date(self, start_date, end_date):
+    def _get_sales_by_date(self, start_date, end_date, report_type='hectolitros'):
         """
-        Obtener ventas (hectolitros) agrupadas por fecha.
+        Obtener ventas (hectolitros o cajas) agrupadas por fecha.
 
         Returns:
-            dict: {date: Decimal(hectolitros)}
+            dict: {date: Decimal(hectolitros o cajas)}
         """
-        sales_data = SalesRecord.objects.filter(
-            deleted_at__isnull=True,
-            date__gte=start_date,
-            date__lte=end_date,
-            hectolitros__isnull=False
-        ).values('date').annotate(
-            total_ht=Sum('hectolitros')
-        )
+        from django.db.models import F, DecimalField, ExpressionWrapper
+        
+        if report_type == 'hectolitros':
+            sales_data = SalesRecord.objects.filter(
+                deleted_at__isnull=True,
+                date__gte=start_date,
+                date__lte=end_date,
+                hectolitros__isnull=False
+            ).values('date').annotate(
+                total_ht=Sum('hectolitros')
+            )
+        else:  # caja
+            sales_data = SalesRecord.objects.filter(
+                deleted_at__isnull=True,
+                date__gte=start_date,
+                date__lte=end_date,
+                orders__isnull=False,
+                units_assigned__isnull=False,
+                unidades_por_caja__isnull=False
+            ).values('date').annotate(
+                total_ht=Sum(
+                    ExpressionWrapper(
+                        (F('orders') * F('units_assigned')) / F('unidades_por_caja'),
+                        output_field=DecimalField()
+                    )
+                )
+            )
 
         # Convertir a diccionario
         sales_by_date = {}
@@ -679,13 +707,14 @@ class HectolitresWeeklyReportDownloadView(APIView):
 
     def get(self, request):
         """
-        Descargar reporte de hectolitros en Excel filtrado por año y semana.
+        Descargar reporte de hectolitros o cajas en Excel filtrado por año y semana.
 
         Query params:
         - start_year: Año inicial (requerido)
         - end_year: Año final (requerido)
         - start_week: Semana inicial (requerido, 1-53)
         - end_week: Semana final (requerido, 1-53)
+        - report_type: "hectolitros" o "caja" (opcional, default: hectolitros)
 
         Returns:
         Archivo Excel con el reporte estructurado por semanas
@@ -699,6 +728,14 @@ class HectolitresWeeklyReportDownloadView(APIView):
         except (TypeError, ValueError):
             return Response(
                 {'error': 'Se requieren parámetros válidos: start_year, end_year, start_week, end_week'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validar parámetro report_type (opcional)
+        report_type = request.query_params.get('report_type', 'hectolitros').strip().lower()
+        if report_type not in ['hectolitros', 'caja']:
+            return Response(
+                {'error': 'report_type debe ser "hectolitros" o "caja" (opcional, default: hectolitros)'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -725,9 +762,9 @@ class HectolitresWeeklyReportDownloadView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Obtener ventas agrupadas por fecha (sumar hectolitros)
+        # Obtener ventas agrupadas por fecha (sumar hectolitros o cajas)
         sales_by_date = self._get_sales_by_date(
-            date_ranges['start_date'], date_ranges['end_date'])
+            date_ranges['start_date'], date_ranges['end_date'], report_type)
 
         # Obtener metas por fecha
         metas_by_date = self._get_metas_by_date(
@@ -750,7 +787,7 @@ class HectolitresWeeklyReportDownloadView(APIView):
                     'end_year': end_year,
                     'start_week': start_week,
                     'end_week': end_week,
-                    'report_type': 'hectolitres_weekly'
+                    'report_type': f'hectolitres_weekly_{report_type}'
                 },
                 date=datetime.now().date(),
                 time=datetime.now().time(),
@@ -763,11 +800,12 @@ class HectolitresWeeklyReportDownloadView(APIView):
 
         # Generar archivo Excel
         output = BytesIO()
+        type_label = 'Hectolitros' if report_type == 'hectolitros' else 'Cajas'
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False, sheet_name='Reporte Hectolitros')
+            df.to_excel(writer, index=False, sheet_name=f'Reporte {type_label}')
 
             # Obtener worksheet para formato
-            worksheet = writer.sheets['Reporte Hectolitros']
+            worksheet = writer.sheets[f'Reporte {type_label}']
 
             # Auto-ajustar ancho de columnas
             for column in worksheet.columns:
@@ -786,7 +824,8 @@ class HectolitresWeeklyReportDownloadView(APIView):
 
         # Generar nombre de archivo con timestamp
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f'reporte_hectolitros_semanal_{start_year}W{start_week}_{end_year}W{end_week}_{timestamp}.xlsx'
+        type_file_label = 'hectolitros' if report_type == 'hectolitros' else 'cajas'
+        filename = f'reporte_{type_file_label}_semanal_{start_year}W{start_week}_{end_year}W{end_week}_{timestamp}.xlsx'
 
         # Crear respuesta HTTP con el archivo Excel
         response = HttpResponse(
@@ -885,19 +924,38 @@ class HectolitresWeeklyReportDownloadView(APIView):
         except (ValueError, OverflowError):
             return None
 
-    def _get_sales_by_date(self, start_date, end_date):
+    def _get_sales_by_date(self, start_date, end_date, report_type='hectolitros'):
         """
-        Obtener ventas (hectolitros) agrupadas por fecha.
+        Obtener ventas (hectolitros o cajas) agrupadas por fecha.
         (Mismo método que HectolitresWeeklyReportView)
         """
-        sales_data = SalesRecord.objects.filter(
-            deleted_at__isnull=True,
-            date__gte=start_date,
-            date__lte=end_date,
-            hectolitros__isnull=False
-        ).values('date').annotate(
-            total_ht=Sum('hectolitros')
-        )
+        from django.db.models import F, DecimalField, ExpressionWrapper
+        
+        if report_type == 'hectolitros':
+            sales_data = SalesRecord.objects.filter(
+                deleted_at__isnull=True,
+                date__gte=start_date,
+                date__lte=end_date,
+                hectolitros__isnull=False
+            ).values('date').annotate(
+                total_ht=Sum('hectolitros')
+            )
+        else:  # caja
+            sales_data = SalesRecord.objects.filter(
+                deleted_at__isnull=True,
+                date__gte=start_date,
+                date__lte=end_date,
+                orders__isnull=False,
+                units_assigned__isnull=False,
+                unidades_por_caja__isnull=False
+            ).values('date').annotate(
+                total_ht=Sum(
+                    ExpressionWrapper(
+                        (F('orders') * F('units_assigned')) / F('unidades_por_caja'),
+                        output_field=DecimalField()
+                    )
+                )
+            )
 
         sales_by_date = {}
         for item in sales_data:
