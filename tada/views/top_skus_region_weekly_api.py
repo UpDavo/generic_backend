@@ -107,14 +107,40 @@ class TopSkusByRegionWeeklyReportView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Obtener datos de ventas
-        sales_data = self._get_sales_data(
-            start_year, end_year, start_week, end_week,
-            retornable, regions_filter, report_type
-        )
-
-        # Construir respuesta estructurada
-        response_data = self._build_response(sales_data, weeks_list)
+        # Si no se especifica retornable, obtener ambos tipos por separado
+        if not retornable:
+            # Obtener datos de retornables
+            sales_data_retornable = self._get_sales_data(
+                start_year, end_year, start_week, end_week,
+                'retornable', regions_filter, report_type
+            )
+            
+            # Obtener datos de no retornables
+            sales_data_no_retornable = self._get_sales_data(
+                start_year, end_year, start_week, end_week,
+                'no retornable', regions_filter, report_type
+            )
+            
+            # Construir respuesta con ambos tipos
+            response_data = {
+                'retornable': self._build_response(sales_data_retornable, weeks_list),
+                'no_retornable': self._build_response(sales_data_no_retornable, weeks_list)
+            }
+            
+            records_count = (
+                sum(len(products) for products in response_data['retornable'].values()) +
+                sum(len(products) for products in response_data['no_retornable'].values())
+            )
+        else:
+            # Obtener datos según el tipo especificado
+            sales_data = self._get_sales_data(
+                start_year, end_year, start_week, end_week,
+                retornable, regions_filter, report_type
+            )
+            
+            # Construir respuesta estructurada
+            response_data = self._build_response(sales_data, weeks_list)
+            records_count = sum(len(products) for products in response_data.values())
 
         # Crear log de la consulta
         try:
@@ -129,12 +155,11 @@ class TopSkusByRegionWeeklyReportView(APIView):
                     'end_year': end_year,
                     'start_week': start_week,
                     'end_week': end_week,
-                    'retornable': retornable if retornable else 'all',
+                    'retornable': retornable if retornable else 'both',
                     'regions': regions_filter if regions_filter else 'all',
                     'report_type': report_type
                 },
-                records_returned=sum(len(products)
-                                     for products in response_data.values())
+                records_returned=records_count
             )
         except Exception as e:
             # No fallar si hay error en el log
@@ -404,17 +429,46 @@ class TopSkusByRegionWeeklyReportDownloadView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Obtener datos de ventas
-        sales_data = self._get_sales_data(
-            start_year, end_year, start_week, end_week,
-            retornable, regions_filter, report_type
-        )
-
-        # Construir respuesta estructurada
-        response_data = self._build_response(sales_data, weeks_list)
-
-        # Crear DataFrame para Excel
-        df = self._build_excel_dataframe(response_data, weeks_list)
+        # Si no se especifica retornable, obtener ambos tipos por separado
+        if not retornable:
+            # Obtener datos de retornables
+            sales_data_retornable = self._get_sales_data(
+                start_year, end_year, start_week, end_week,
+                'retornable', regions_filter, report_type
+            )
+            
+            # Obtener datos de no retornables
+            sales_data_no_retornable = self._get_sales_data(
+                start_year, end_year, start_week, end_week,
+                'no retornable', regions_filter, report_type
+            )
+            
+            # Construir respuesta con ambos tipos
+            response_data_retornable = self._build_response(sales_data_retornable, weeks_list)
+            response_data_no_retornable = self._build_response(sales_data_no_retornable, weeks_list)
+            
+            # Crear DataFrames separados
+            df_retornable = self._build_excel_dataframe(response_data_retornable, weeks_list)
+            df_no_retornable = self._build_excel_dataframe(response_data_no_retornable, weeks_list)
+            
+            records_count = len(df_retornable) + len(df_no_retornable)
+            
+            retornable_label = 'ambos'
+        else:
+            # Obtener datos según el tipo especificado
+            sales_data = self._get_sales_data(
+                start_year, end_year, start_week, end_week,
+                retornable, regions_filter, report_type
+            )
+            
+            # Construir respuesta estructurada
+            response_data = self._build_response(sales_data, weeks_list)
+            
+            # Crear DataFrame para Excel
+            df = self._build_excel_dataframe(response_data, weeks_list)
+            
+            records_count = len(df)
+            retornable_label = 'retornables' if retornable == 'retornable' else 'no_retornables'
 
         # Crear log de la descarga
         try:
@@ -429,11 +483,11 @@ class TopSkusByRegionWeeklyReportDownloadView(APIView):
                     'end_year': end_year,
                     'start_week': start_week,
                     'end_week': end_week,
-                    'retornable': retornable if retornable else 'all',
+                    'retornable': retornable if retornable else 'both',
                     'regions': regions_filter if regions_filter else 'all',
                     'report_type': report_type
                 },
-                records_returned=len(df)
+                records_returned=records_count
             )
         except Exception as e:
             print(f"Error creando log: {e}")
@@ -441,23 +495,37 @@ class TopSkusByRegionWeeklyReportDownloadView(APIView):
         # Generar archivo Excel
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, sheet_name='TOP 5 SKUs', index=False)
-
-            # Ajustar ancho de columnas
-            worksheet = writer.sheets['TOP 5 SKUs']
-            for idx, col in enumerate(df.columns, 1):
-                max_length = max(
-                    df[col].astype(str).apply(len).max(),
-                    len(str(col))
-                )
-                worksheet.column_dimensions[chr(
-                    64 + idx)].width = min(max_length + 2, 50)
+            if not retornable:
+                # Si es ambos, crear dos hojas
+                df_retornable.to_excel(writer, sheet_name='Retornables', index=False)
+                df_no_retornable.to_excel(writer, sheet_name='No Retornables', index=False)
+                
+                # Ajustar ancho de columnas para ambas hojas
+                for sheet_name, df_sheet in [('Retornables', df_retornable), ('No Retornables', df_no_retornable)]:
+                    worksheet = writer.sheets[sheet_name]
+                    for idx, col in enumerate(df_sheet.columns, 1):
+                        max_length = max(
+                            df_sheet[col].astype(str).apply(len).max(),
+                            len(str(col))
+                        )
+                        worksheet.column_dimensions[chr(64 + idx)].width = min(max_length + 2, 50)
+            else:
+                # Si es específico, crear una sola hoja
+                df.to_excel(writer, sheet_name='TOP 5 SKUs', index=False)
+                
+                # Ajustar ancho de columnas
+                worksheet = writer.sheets['TOP 5 SKUs']
+                for idx, col in enumerate(df.columns, 1):
+                    max_length = max(
+                        df[col].astype(str).apply(len).max(),
+                        len(str(col))
+                    )
+                    worksheet.column_dimensions[chr(64 + idx)].width = min(max_length + 2, 50)
 
         output.seek(0)
 
         # Generar nombre de archivo
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        retornable_label = 'retornables' if retornable == 'retornable' else 'no_retornables'
         type_label = 'hectolitros' if report_type == 'hectolitros' else 'cajas'
         filename = f'top5_skus_{type_label}_{retornable_label}_{start_year}W{start_week}_{end_year}W{end_week}_{timestamp}.xlsx'
 
