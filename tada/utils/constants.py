@@ -6,6 +6,7 @@ EXECUTION = 4
 WEBHOOK = 5
 SALES = 6
 SALES_CHECK = 7
+TOP_SKUS_REGION = 8
 
 APP_NAMES = {
     PUSH: "Push",
@@ -15,6 +16,7 @@ APP_NAMES = {
     WEBHOOK: "Webhook",
     SALES: "Sales Report",
     SALES_CHECK: "Sales Check",
+    TOP_SKUS_REGION: "TOP SKUs by Region",
 }
 
 APPS = {
@@ -25,6 +27,7 @@ APPS = {
     "WEBHOOK": WEBHOOK,
     "SALES": SALES,
     "SALES_CHECK": SALES_CHECK,
+    "TOP_SKUS_REGION": TOP_SKUS_REGION,
 }
 
 

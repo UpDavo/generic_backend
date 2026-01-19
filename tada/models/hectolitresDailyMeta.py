@@ -12,7 +12,7 @@ class HectolitresDailyMeta(BaseModel):
     Similar a DailyMeta pero específica para el objetivo de hectolitros.
     """
     date = models.DateField(
-        unique=True, 
+        unique=True,
         help_text="Fecha para la cual se establece la meta de hectolitros"
     )
     target_hectolitres = models.DecimalField(
@@ -33,5 +33,4 @@ class HectolitresDailyMeta(BaseModel):
 
     @staticmethod
     def get_work_hours_range():
-        """Rango de horas laborales (por compatibilidad)"""
         return (7, 3)

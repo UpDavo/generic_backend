@@ -130,6 +130,18 @@ urlpatterns = [
          name='hectolitres-weekly-report'),
     path('hectolitres-daily-meta/weekly-report/download/', HectolitresWeeklyReportDownloadView.as_view(),
          name='hectolitres-weekly-report-download'),
+    
+    # Reporte TOP 5 SKUs por región
+    path('top-skus-region/weekly-report/', TopSkusByRegionWeeklyReportView.as_view(),
+         name='top-skus-region-weekly-report'),
+    path('top-skus-region/weekly-report/download/', TopSkusByRegionWeeklyReportDownloadView.as_view(),
+         name='top-skus-region-weekly-report-download'),
+    
+    # Comparativa anual de hectolitros
+    path('hectolitres/yearly-comparison/', HectolitresYearlyComparisonReportView.as_view(),
+         name='hectolitres-yearly-comparison'),
+    path('hectolitres/yearly-comparison/download/', HectolitresYearlyComparisonReportDownloadView.as_view(),
+         name='hectolitres-yearly-comparison-download'),
 
     # Sales Report Processor
     path('sales-report/process/', SalesReportProcessorView.as_view(),
