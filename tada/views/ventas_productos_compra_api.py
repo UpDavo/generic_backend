@@ -613,3 +613,30 @@ class VentasProductosCompraDownloadAllView(APIView):
         response['Content-Disposition'] = f'attachment; filename="ventas_productos_compra_all_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx"'
 
         return response
+
+
+class VentasProductosCompraCategoriesView(APIView):
+    """
+    View to get a list of unique categories from VentasProductosCompra.
+    Returns only non-null, non-empty categories for dropdown lists.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        """
+        Get list of unique categories.
+        """
+        # Get distinct categories, excluding null and empty values
+        categories = VentasProductosCompra.objects.filter(
+            category__isnull=False
+        ).exclude(
+            category=''
+        ).values_list('category', flat=True).distinct().order_by('category')
+
+        # Convert to list and return
+        category_list = list(categories)
+
+        return Response({
+            'count': len(category_list),
+            'categories': category_list
+        }, status=status.HTTP_200_OK)

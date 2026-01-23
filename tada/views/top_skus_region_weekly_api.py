@@ -22,7 +22,7 @@ class TopSkusByRegionWeeklyReportView(APIView):
 
     def get(self, request):
         """
-        Obtener TOP 5 SKUs por región y semana.
+        Obtener TOP 5 SKUs por región y semana con filtros jerárquicos opcionales.
 
         Query params:
         - start_year: Año inicial (requerido)
@@ -31,6 +31,9 @@ class TopSkusByRegionWeeklyReportView(APIView):
         - end_week: Semana final (requerido, 1-53)
         - retornable: "retornable" o "no retornable" (opcional, default: todos)
         - regions: Lista de regiones separadas por coma (opcional, default: todas)
+        - group_by_region: "true" o "false" (opcional, default: true) - Agrupar por región
+        - group_by_city: "true" o "false" (opcional, default: false) - Agrupar por ciudad (requiere group_by_region)
+        - group_by_poc: "true" o "false" (opcional, default: false) - Agrupar por POC (requiere group_by_city)
 
         Returns:
         {
@@ -45,6 +48,16 @@ class TopSkusByRegionWeeklyReportView(APIView):
                 ...
             },
             ...
+        }
+        O con jerarquía:
+        {
+            "Region A": {
+                "Ciudad 1": {
+                    "POC 1": {
+                        "Producto 1": {...}
+                    }
+                }
+            }
         }
         """
         # Validar parámetros requeridos
@@ -97,6 +110,23 @@ class TopSkusByRegionWeeklyReportView(APIView):
         regions_filter = [r.strip() for r in regions_param.split(
             ',') if r.strip()] if regions_param else None
 
+        # Obtener parámetros de agrupación jerárquica
+        group_by_region = request.query_params.get('group_by_region', 'true').strip().lower() == 'true'
+        group_by_city = request.query_params.get('group_by_city', 'false').strip().lower() == 'true'
+        group_by_poc = request.query_params.get('group_by_poc', 'false').strip().lower() == 'true'
+
+        # Validar jerarquía: city requiere region, poc requiere city
+        if group_by_city and not group_by_region:
+            return Response(
+                {'error': 'group_by_city requiere que group_by_region sea true'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        if group_by_poc and not group_by_city:
+            return Response(
+                {'error': 'group_by_poc requiere que group_by_city sea true'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         # Generar lista de semanas
         weeks_list = self._generate_weeks_list(
             start_year, end_year, start_week, end_week)
@@ -112,35 +142,38 @@ class TopSkusByRegionWeeklyReportView(APIView):
             # Obtener datos de retornables
             sales_data_retornable = self._get_sales_data(
                 start_year, end_year, start_week, end_week,
-                'retornable', regions_filter, report_type
+                'retornable', regions_filter, report_type,
+                group_by_region, group_by_city, group_by_poc
             )
             
             # Obtener datos de no retornables
             sales_data_no_retornable = self._get_sales_data(
                 start_year, end_year, start_week, end_week,
-                'no retornable', regions_filter, report_type
+                'no retornable', regions_filter, report_type,
+                group_by_region, group_by_city, group_by_poc
             )
             
             # Construir respuesta con ambos tipos
             response_data = {
-                'retornable': self._build_response(sales_data_retornable, weeks_list),
-                'no_retornable': self._build_response(sales_data_no_retornable, weeks_list)
+                'retornable': self._build_response(sales_data_retornable, weeks_list, group_by_region, group_by_city, group_by_poc),
+                'no_retornable': self._build_response(sales_data_no_retornable, weeks_list, group_by_region, group_by_city, group_by_poc)
             }
             
             records_count = (
-                sum(len(products) for products in response_data['retornable'].values()) +
-                sum(len(products) for products in response_data['no_retornable'].values())
+                self._count_records(response_data['retornable'], group_by_region, group_by_city, group_by_poc) +
+                self._count_records(response_data['no_retornable'], group_by_region, group_by_city, group_by_poc)
             )
         else:
             # Obtener datos según el tipo especificado
             sales_data = self._get_sales_data(
                 start_year, end_year, start_week, end_week,
-                retornable, regions_filter, report_type
+                retornable, regions_filter, report_type,
+                group_by_region, group_by_city, group_by_poc
             )
             
             # Construir respuesta estructurada
-            response_data = self._build_response(sales_data, weeks_list)
-            records_count = sum(len(products) for products in response_data.values())
+            response_data = self._build_response(sales_data, weeks_list, group_by_region, group_by_city, group_by_poc)
+            records_count = self._count_records(response_data, group_by_region, group_by_city, group_by_poc)
 
         # Crear log de la consulta
         try:
@@ -157,7 +190,10 @@ class TopSkusByRegionWeeklyReportView(APIView):
                     'end_week': end_week,
                     'retornable': retornable if retornable else 'both',
                     'regions': regions_filter if regions_filter else 'all',
-                    'report_type': report_type
+                    'report_type': report_type,
+                    'group_by_region': group_by_region,
+                    'group_by_city': group_by_city,
+                    'group_by_poc': group_by_poc
                 },
                 records_returned=records_count
             )
@@ -192,18 +228,15 @@ class TopSkusByRegionWeeklyReportView(APIView):
 
         return weeks_list
 
-    def _get_sales_data(self, start_year, end_year, start_week, end_week, retornable, regions_filter, report_type='hectolitros'):
+    def _get_sales_data(self, start_year, end_year, start_week, end_week, retornable, regions_filter, report_type='hectolitros', group_by_region=True, group_by_city=False, group_by_poc=False):
         """
-        Obtener datos de ventas agrupados por región, producto, año y semana.
+        Obtener datos de ventas agrupados con jerarquía flexible.
 
         Returns:
-            dict: {
-                region: {
-                    (product_name, sku_vtex): {
-                        (year, week): total_value
-                    }
-                }
-            }
+            dict: Estructura jerárquica según los parámetros de agrupación:
+            - Solo región: {region: {(product_name, sku): {(year, week): value}}}
+            - Región + ciudad: {region: {city: {(product_name, sku): {(year, week): value}}}}
+            - Región + ciudad + POC: {region: {city: {poc: {(product_name, sku): {(year, week): value}}}}}
         """
         # Construir filtro base
         filters = Q(
@@ -250,26 +283,29 @@ class TopSkusByRegionWeeklyReportView(APIView):
 
             filters &= year_filters
 
+        # Determinar los campos para agrupar según la jerarquía
+        grouping_fields = []
+        if group_by_region:
+            grouping_fields.append('poc_region')
+        if group_by_city:
+            grouping_fields.append('poc_city')
+        if group_by_poc:
+            grouping_fields.append('poc_id')
+            grouping_fields.append('poc_name')
+        
+        # Siempre incluir producto, SKU, año y semana
+        grouping_fields.extend(['name_homologated', 'name', 'sku_vtex', 'year', 'week'])
+
         # Obtener datos agrupados con anotación según tipo de reporte
         if report_type == 'hectolitros':
             sales_queryset = SalesRecord.objects.filter(filters).values(
-                'poc_region',
-                'name_homologated',
-                'name',
-                'sku_vtex',
-                'year',
-                'week'
+                *grouping_fields
             ).annotate(
                 total_value=Sum('hectolitros')
-            ).order_by('poc_region', 'name_homologated', 'year', 'week')
+            ).order_by(*grouping_fields)
         else:  # caja
             sales_queryset = SalesRecord.objects.filter(filters).values(
-                'poc_region',
-                'name_homologated',
-                'name',
-                'sku_vtex',
-                'year',
-                'week'
+                *grouping_fields
             ).annotate(
                 total_value=Sum(
                     ExpressionWrapper(
@@ -277,77 +313,194 @@ class TopSkusByRegionWeeklyReportView(APIView):
                         output_field=DecimalField()
                     )
                 )
-            ).order_by('poc_region', 'name_homologated', 'year', 'week')
+            ).order_by(*grouping_fields)
 
-        # Organizar datos en estructura anidada
-        data_by_region = defaultdict(
-            lambda: defaultdict(lambda: defaultdict(Decimal)))
+        # Organizar datos en estructura anidada según la jerarquía
+        if not group_by_region:
+            # Sin agrupación: solo productos
+            data_structure = defaultdict(lambda: defaultdict(Decimal))
+            for item in sales_queryset:
+                product_name = item['name_homologated'] or item['name'] or 'Sin nombre'
+                sku = item['sku_vtex']
+                year = item['year']
+                week = item['week']
+                value = Decimal(str(item['total_value'])) if item['total_value'] else Decimal('0')
+                product_key = (product_name, sku)
+                data_structure[product_key][(year, week)] = value
+        elif group_by_region and not group_by_city:
+            # Solo región
+            data_structure = defaultdict(lambda: defaultdict(lambda: defaultdict(Decimal)))
+            for item in sales_queryset:
+                region = item['poc_region'] or 'Sin región'
+                product_name = item['name_homologated'] or item['name'] or 'Sin nombre'
+                sku = item['sku_vtex']
+                year = item['year']
+                week = item['week']
+                value = Decimal(str(item['total_value'])) if item['total_value'] else Decimal('0')
+                product_key = (product_name, sku)
+                data_structure[region][product_key][(year, week)] = value
+        elif group_by_city and not group_by_poc:
+            # Región + Ciudad
+            data_structure = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(Decimal))))
+            for item in sales_queryset:
+                region = item['poc_region'] or 'Sin región'
+                city = item['poc_city'] or 'Sin ciudad'
+                product_name = item['name_homologated'] or item['name'] or 'Sin nombre'
+                sku = item['sku_vtex']
+                year = item['year']
+                week = item['week']
+                value = Decimal(str(item['total_value'])) if item['total_value'] else Decimal('0')
+                product_key = (product_name, sku)
+                data_structure[region][city][product_key][(year, week)] = value
+        else:
+            # Región + Ciudad + POC
+            data_structure = defaultdict(
+                lambda: defaultdict(
+                    lambda: defaultdict(
+                        lambda: defaultdict(
+                            lambda: defaultdict(Decimal)
+                        )
+                    )
+                )
+            )
+            for item in sales_queryset:
+                region = item['poc_region'] or 'Sin región'
+                city = item['poc_city'] or 'Sin ciudad'
+                poc_id = item['poc_id'] or 'Sin ID'
+                poc_name = item['poc_name'] or 'Sin nombre'
+                poc_key = f"{poc_id} - {poc_name}"
+                product_name = item['name_homologated'] or item['name'] or 'Sin nombre'
+                sku = item['sku_vtex']
+                year = item['year']
+                week = item['week']
+                value = Decimal(str(item['total_value'])) if item['total_value'] else Decimal('0')
+                product_key = (product_name, sku)
+                data_structure[region][city][poc_key][product_key][(year, week)] = value
 
-        for item in sales_queryset:
-            region = item['poc_region']
-            product_name = item['name_homologated'] or item['name'] or 'Sin nombre'
-            sku = item['sku_vtex']
-            year = item['year']
-            week = item['week']
-            value = Decimal(
-                str(item['total_value'])) if item['total_value'] else Decimal('0')
+        return data_structure
 
-            # Usar tupla (producto, sku) como clave
-            product_key = (product_name, sku)
-            data_by_region[region][product_key][(year, week)] = value
-
-        return data_by_region
-
-    def _build_response(self, sales_data, weeks_list):
+    def _build_response(self, sales_data, weeks_list, group_by_region=True, group_by_city=False, group_by_poc=False):
         """
-        Construir respuesta JSON con TOP 5 productos por región (basado en hectolitros).
+        Construir respuesta JSON con TOP 5 productos con jerarquía flexible.
         """
-        response = {}
+        if not group_by_region:
+            # Sin agrupación por región: solo TOP 5 general
+            return self._build_top5_for_level(sales_data, weeks_list)
+        elif group_by_region and not group_by_city:
+            # Solo región
+            response = {}
+            for region, products_data in sales_data.items():
+                region_data = self._build_top5_for_level(products_data, weeks_list)
+                if region_data:
+                    response[region] = region_data
+            return response
+        elif group_by_city and not group_by_poc:
+            # Región + Ciudad
+            response = {}
+            for region, cities_data in sales_data.items():
+                region_response = {}
+                for city, products_data in cities_data.items():
+                    city_data = self._build_top5_for_level(products_data, weeks_list)
+                    if city_data:
+                        region_response[city] = city_data
+                if region_response:
+                    response[region] = region_response
+            return response
+        else:
+            # Región + Ciudad + POC
+            response = {}
+            for region, cities_data in sales_data.items():
+                region_response = {}
+                for city, pocs_data in cities_data.items():
+                    city_response = {}
+                    for poc, products_data in pocs_data.items():
+                        poc_data = self._build_top5_for_level(products_data, weeks_list)
+                        if poc_data:
+                            city_response[poc] = poc_data
+                    if city_response:
+                        region_response[city] = city_response
+                if region_response:
+                    response[region] = region_response
+            return response
 
-        for region, products_data in sales_data.items():
-            # Calcular total por producto
-            products_totals = {}
-            for product_key, weeks_data in products_data.items():
-                total = sum(weeks_data.values())
-                products_totals[product_key] = total
+    def _build_top5_for_level(self, products_data, weeks_list):
+        """
+        Construir TOP 5 productos para un nivel específico de la jerarquía.
+        """
+        # Calcular total por producto
+        products_totals = {}
+        for product_key, weeks_data in products_data.items():
+            total = sum(weeks_data.values())
+            products_totals[product_key] = total
 
-            # Obtener TOP 5 productos por total de hectolitros
-            top_5_products = sorted(
-                products_totals.items(),
-                key=lambda x: x[1],
-                reverse=True
-            )[:5]
+        # Obtener TOP 5 productos por total
+        top_5_products = sorted(
+            products_totals.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )[:5]
 
-            # Construir estructura para esta región
-            region_data = {}
-            for product_key, total in top_5_products:
-                product_name, sku = product_key
-                weeks_data = sales_data[region][product_key]
+        # Construir estructura de productos
+        level_data = {}
+        for product_key, total in top_5_products:
+            product_name, sku = product_key
+            weeks_data = products_data[product_key]
 
-                product_info = {
-                    'total': round(float(total), 2),
-                    'sku_vtex': sku
-                }
+            product_info = {
+                'total': round(float(total), 2),
+                'sku_vtex': sku
+            }
 
-                # Agregar datos por semana
-                for week_id in weeks_list:
-                    # Extraer año y número de semana del ID
-                    week_num = int(week_id[1:])  # Remover 'w'
+            # Agregar datos por semana
+            for week_id in weeks_list:
+                # Extraer año y número de semana del ID
+                week_num = int(week_id[1:])  # Remover 'w'
 
-                    # Buscar el valor en weeks_data
-                    week_value = Decimal('0')
-                    for (year, week), value in weeks_data.items():
-                        if week == week_num:
-                            week_value += value
+                # Buscar el valor en weeks_data
+                week_value = Decimal('0')
+                for (year, week), value in weeks_data.items():
+                    if week == week_num:
+                        week_value += value
 
-                    product_info[week_id] = round(float(week_value), 2)
+                product_info[week_id] = round(float(week_value), 2)
 
-                region_data[product_name] = product_info
+            level_data[product_name] = product_info
 
-            if region_data:
-                response[region] = region_data
+        return level_data
 
-        return response
+    def _count_records(self, data, group_by_region=True, group_by_city=False, group_by_poc=False):
+        """
+        Contar recursivamente el número de productos en la estructura jerárquica.
+        """
+        if not isinstance(data, dict):
+            return 0
+        
+        if not group_by_region:
+            # Sin agrupación: contar productos directamente
+            return len(data)
+        elif group_by_region and not group_by_city:
+            # Solo región: contar productos por región
+            return sum(len(products) for products in data.values() if isinstance(products, dict))
+        elif group_by_city and not group_by_poc:
+            # Región + Ciudad
+            count = 0
+            for region_data in data.values():
+                if isinstance(region_data, dict):
+                    for city_data in region_data.values():
+                        if isinstance(city_data, dict):
+                            count += len(city_data)
+            return count
+        else:
+            # Región + Ciudad + POC
+            count = 0
+            for region_data in data.values():
+                if isinstance(region_data, dict):
+                    for city_data in region_data.values():
+                        if isinstance(city_data, dict):
+                            for poc_data in city_data.values():
+                                if isinstance(poc_data, dict):
+                                    count += len(poc_data)
+            return count
 
 
 class TopSkusByRegionWeeklyReportDownloadView(APIView):
@@ -358,7 +511,7 @@ class TopSkusByRegionWeeklyReportDownloadView(APIView):
 
     def get(self, request):
         """
-        Descargar TOP 5 SKUs por región y semana en Excel.
+        Descargar TOP 5 SKUs por región y semana en Excel con filtros jerárquicos.
 
         Query params:
         - start_year: Año inicial (requerido)
@@ -368,6 +521,9 @@ class TopSkusByRegionWeeklyReportDownloadView(APIView):
         - retornable: "retornable" o "no retornable" (opcional, default: todos)
         - regions: Lista de regiones separadas por coma (opcional, default: todas)
         - report_type: "hectolitros" o "caja" (opcional, default: hectolitros)
+        - group_by_region: "true" o "false" (opcional, default: true)
+        - group_by_city: "true" o "false" (opcional, default: false)
+        - group_by_poc: "true" o "false" (opcional, default: false)
 
         Returns:
         Archivo Excel con el reporte estructurado por regiones y productos
