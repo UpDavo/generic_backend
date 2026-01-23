@@ -60,12 +60,13 @@ class SalesReportProcessorView(APIView):
 
             if settings.DEBUG:
                 print(f"📊 Archivo leído: {len(df)} filas encontradas")
-            
+
             # VALIDACIÓN: Advertir si hay demasiados registros
             if len(df) > 50000:
                 if settings.DEBUG:
-                    print(f"⚠️  ADVERTENCIA: {len(df)} filas a procesar. Esto puede tomar varios minutos.")
-            
+                    print(
+                        f"⚠️  ADVERTENCIA: {len(df)} filas a procesar. Esto puede tomar varios minutos.")
+
             # LÍMITE DE SEGURIDAD: Rechazar archivos extremadamente grandes
             if len(df) > 300000:
                 return Response(
@@ -98,7 +99,8 @@ class SalesReportProcessorView(APIView):
             # Filtrar duplicados y obtener solo registros nuevos
             if settings.DEBUG:
                 print(f"🔍 Filtrando duplicados...")
-                print(f"   📊 Columnas del DF consolidado: {list(consolidated_df.columns)}")
+                print(
+                    f"   📊 Columnas del DF consolidado: {list(consolidated_df.columns)}")
 
             try:
                 new_records_df, update_records_df, duplicates_count = self._filter_duplicates(
@@ -106,8 +108,10 @@ class SalesReportProcessorView(APIView):
 
                 if settings.DEBUG:
                     print(f"   ✓ {len(new_records_df)} registros nuevos")
-                    print(f"   🔄 {len(update_records_df)} registros para actualizar")
-                    print(f"   ⚠️  {duplicates_count} registros duplicados exactos (ignorados)")
+                    print(
+                        f"   🔄 {len(update_records_df)} registros para actualizar")
+                    print(
+                        f"   ⚠️  {duplicates_count} registros duplicados exactos (ignorados)")
             except Exception as e:
                 if settings.DEBUG:
                     print(f"   ❌ ERROR en _filter_duplicates: {str(e)}")
@@ -119,7 +123,7 @@ class SalesReportProcessorView(APIView):
             # Guardar registros nuevos y actualizar existentes
             saved_count = 0
             updated_count = 0
-            
+
             if len(new_records_df) > 0:
                 if settings.DEBUG:
                     print(
@@ -138,7 +142,7 @@ class SalesReportProcessorView(APIView):
                         import traceback
                         traceback.print_exc()
                     raise
-            
+
             if len(update_records_df) > 0:
                 if settings.DEBUG:
                     print(
@@ -169,34 +173,36 @@ class SalesReportProcessorView(APIView):
                         date_dfs.append(new_records_df['date'])
                     if len(update_records_df) > 0 and 'date' in update_records_df.columns:
                         date_dfs.append(update_records_df['date'])
-                    
+
                     if date_dfs:
                         all_dates = pd.concat(date_dfs)
                         min_date = pd.to_datetime(all_dates).min().date()
                         max_date = pd.to_datetime(all_dates).max().date()
-                        
+
                         SalesUploadLog.objects.create(
                             initrowdate=min_date,
                             endrowdate=max_date,
                             rows_count=saved_count + updated_count,
                             user=request.user
                         )
-                        
+
                         if settings.DEBUG:
-                            print(f"📊 Upload log creado: desde {min_date} hasta {max_date}")
+                            print(
+                                f"📊 Upload log creado: desde {min_date} hasta {max_date}")
                 except Exception as e:
                     # No fallar si la tabla no existe aún (migración pendiente)
                     if settings.DEBUG:
-                        print(f"⚠️ Error al crear upload log (puede que falte migración): {str(e)}")
+                        print(
+                            f"⚠️ Error al crear upload log (puede que falte migración): {str(e)}")
 
             # Generar archivo Excel de salida con múltiples sheets
             if settings.DEBUG:
                 print(f"📝 Generando archivo Excel de salida...")
-                
+
             try:
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                 output = BytesIO()
-                
+
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
                     # SHEET 1: Registros procesados (nuevos)
                     spanish_columns = {
@@ -222,22 +228,80 @@ class SalesReportProcessorView(APIView):
                         'dayname': 'nombre_dia',
                         'year_month': 'año_mes'
                     }
-                    
+
                     # Crear copia para Excel con columnas en español
                     excel_df = new_records_df.copy()
+                    
+                    # Convertir tipos de datos ANTES de renombrar para asegurar tipos correctos
+                    # Columnas que deben ser enteros
+                    int_columns = ['orders', 'units', 'week', 'year', 'month', 'day']
+                    for col in int_columns:
+                        if col in excel_df.columns:
+                            excel_df[col] = pd.to_numeric(excel_df[col], errors='coerce').fillna(0).astype('Int64')
+                    
+                    # unidades_por_caja puede ser decimal o entero, convertir a entero si no tiene decimales
+                    if 'unidades_por_caja' in excel_df.columns:
+                        excel_df['unidades_por_caja'] = pd.to_numeric(excel_df['unidades_por_caja'], errors='coerce').fillna(0).astype('Int64')
+                    
+                    # Columnas que deben ser decimales/float con 2 decimales
+                    float_columns_2 = ['units_assigned', 'units_per_sku', 'venta_pack', 'dolars']
+                    for col in float_columns_2:
+                        if col in excel_df.columns:
+                            excel_df[col] = pd.to_numeric(excel_df[col], errors='coerce').round(2)
+                    
+                    # Columnas que requieren 5 decimales (mililitros y hectolitros)
+                    float_columns_5 = ['mililitros', 'hectolitros']
+                    for col in float_columns_5:
+                        if col in excel_df.columns:
+                            excel_df[col] = pd.to_numeric(excel_df[col], errors='coerce').round(5)
+                    
+                    # Convertir fecha a string en formato YYYY-MM-DD para evitar problemas de zona horaria
+                    if 'date' in excel_df.columns:
+                        excel_df['date'] = pd.to_datetime(excel_df['date']).dt.strftime('%Y-%m-%d')
+                    
                     columns_to_rename = {
                         k: v for k, v in spanish_columns.items() if k in excel_df.columns
                     }
                     excel_df = excel_df.rename(columns=columns_to_rename)
-                    
+
                     excel_df.to_excel(
                         writer, index=False, sheet_name='Registros Nuevos')
                     
+                    # Aplicar formatos de números a las columnas
+                    from openpyxl.styles import numbers
+                    worksheet = writer.sheets['Registros Nuevos']
+                    
+                    column_formats = {
+                        'pedidos': numbers.FORMAT_NUMBER,
+                        'unidades': numbers.FORMAT_NUMBER,
+                        'unidades_asignadas': numbers.FORMAT_NUMBER_00,
+                        'unidades_por_sku': numbers.FORMAT_NUMBER_00,
+                        'unidades_por_caja': numbers.FORMAT_NUMBER,
+                        'venta_pack': numbers.FORMAT_NUMBER_00,
+                        'mililitros': '0.00000',
+                        'hectolitros': '0.00000',
+                        'dolares': numbers.FORMAT_NUMBER_00,
+                        'semana': numbers.FORMAT_NUMBER,
+                        'año': numbers.FORMAT_NUMBER,
+                        'mes': numbers.FORMAT_NUMBER,
+                        'dia': numbers.FORMAT_NUMBER
+                    }
+                    
+                    # Aplicar formatos a las columnas
+                    header_row = [cell.value for cell in worksheet[1]]
+                    for col_idx, col_name in enumerate(header_row, start=1):
+                        if col_name in column_formats:
+                            column_letter = worksheet.cell(1, col_idx).column_letter
+                            for row in range(2, worksheet.max_row + 1):
+                                cell = worksheet[f'{column_letter}{row}']
+                                cell.number_format = column_formats[col_name]
+
                     # SHEET 2: Registros con errores (si existen)
                     if len(unprocessed_df) > 0:
                         if settings.DEBUG:
-                            print(f"   ⚠️  {len(unprocessed_df)} registros con errores - agregando sheet...")
-                        
+                            print(
+                                f"   ⚠️  {len(unprocessed_df)} registros con errores - agregando sheet...")
+
                         # Renombrar columnas del DataFrame de errores a español
                         error_columns = {
                             'Date Hierarchy - Date': 'Fecha',
@@ -247,9 +311,10 @@ class SalesReportProcessorView(APIView):
                             '# Orders': 'Pedidos',
                             'error_reason': 'Motivo_Error'
                         }
-                        
+
                         excel_errors_df = unprocessed_df.copy()
-                        excel_errors_df = excel_errors_df.rename(columns=error_columns)
+                        excel_errors_df = excel_errors_df.rename(
+                            columns=error_columns)
                         excel_errors_df.to_excel(
                             writer, index=False, sheet_name='Registros con Errores')
 
@@ -258,8 +323,9 @@ class SalesReportProcessorView(APIView):
                 if settings.DEBUG:
                     print(f"   ✓ Archivo Excel generado correctamente")
                     if len(unprocessed_df) > 0:
-                        print(f"   ✓ Incluye sheet con {len(unprocessed_df)} registros con errores")
-                    
+                        print(
+                            f"   ✓ Incluye sheet con {len(unprocessed_df)} registros con errores")
+
             except Exception as e:
                 if settings.DEBUG:
                     print(f"   ❌ ERROR al generar Excel: {str(e)}")
@@ -276,7 +342,7 @@ class SalesReportProcessorView(APIView):
                 content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
             )
             response['Content-Disposition'] = f'attachment; filename="{filename}"'
-            
+
             # Agregar headers con estadísticas del procesamiento
             response['X-Records-Created'] = str(saved_count)
             response['X-Records-Updated'] = str(updated_count)
@@ -325,7 +391,7 @@ class SalesReportProcessorView(APIView):
 
         # Filtrar el DataFrame para incluir solo las columnas requeridas
         consolidated_df = df[required_columns].copy()
-        
+
         # Guardar las columnas originales para el reporte de errores
         # Esto permitirá mostrar los datos originales cuando un SKU no se procese
         consolidated_df['original_date'] = df['Date Hierarchy - Date']
@@ -352,23 +418,28 @@ class SalesReportProcessorView(APIView):
         # Enriquecer datos con POC
         if settings.DEBUG:
             print(f"🏪 Enriqueciendo datos de POC...")
-        consolidated_df, unprocessed_poc_df = self._enrich_with_poc_data(consolidated_df)
+        consolidated_df, unprocessed_poc_df = self._enrich_with_poc_data(
+            consolidated_df)
         if settings.DEBUG and len(unprocessed_poc_df) > 0:
-            print(f"   ⚠️  {len(unprocessed_poc_df)} registros sin POC encontrado")
+            print(
+                f"   ⚠️  {len(unprocessed_poc_df)} registros sin POC encontrado")
 
         # Enriquecer datos con información de productos
         if settings.DEBUG:
             print(f"📦 Enriqueciendo datos de productos...")
-        consolidated_df, unprocessed_products_df = self._enrich_with_product_data(consolidated_df)
+        consolidated_df, unprocessed_products_df = self._enrich_with_product_data(
+            consolidated_df)
         if settings.DEBUG:
             print(
                 f"   ✓ {len(consolidated_df)} filas después de expansión de materiales")
             if len(unprocessed_products_df) > 0:
-                print(f"   ⚠️  {len(unprocessed_products_df)} registros no se pudieron procesar")
-        
+                print(
+                    f"   ⚠️  {len(unprocessed_products_df)} registros no se pudieron procesar")
+
         # Combinar los DataFrames de errores de POC y productos
         if len(unprocessed_poc_df) > 0 and len(unprocessed_products_df) > 0:
-            unprocessed_df = pd.concat([unprocessed_poc_df, unprocessed_products_df], ignore_index=True)
+            unprocessed_df = pd.concat(
+                [unprocessed_poc_df, unprocessed_products_df], ignore_index=True)
         elif len(unprocessed_poc_df) > 0:
             unprocessed_df = unprocessed_poc_df
         else:
@@ -437,17 +508,18 @@ class SalesReportProcessorView(APIView):
         # filtramos cualquier registro que no tenga POC, SKU padre o nombre de producto
         if settings.DEBUG:
             original_count = len(consolidated_df)
-        
+
         # Filtrar registros que NO tengan campos críticos
         # Estos son registros que no pudieron ser procesados correctamente
         critical_columns = ['poc_name', 'sku_padre', 'name']
         for col in critical_columns:
             if col in consolidated_df.columns:
                 consolidated_df = consolidated_df[consolidated_df[col].notna()]
-        
+
         if settings.DEBUG and original_count != len(consolidated_df):
             removed_count = original_count - len(consolidated_df)
-            print(f"⚠️ Se filtraron {removed_count} registros con datos incompletos")
+            print(
+                f"⚠️ Se filtraron {removed_count} registros con datos incompletos")
 
         # Convertir todos los campos de texto a mayúsculas (vectorizado para mejor rendimiento)
         text_columns = ['poc_name', 'poc_homolo', 'poc_city', 'poc_region',
@@ -474,7 +546,7 @@ class SalesReportProcessorView(APIView):
 
         # NO renombrar columnas aquí - mantener en inglés para filtrado y guardado
         # El renombrado a español se hará solo para el Excel de salida
-        
+
         # Retornar también DataFrame vacío de no procesados (se llenará en _enrich_with_product_data)
         return consolidated_df, pd.DataFrame()
 
@@ -533,11 +605,13 @@ class SalesReportProcessorView(APIView):
         # Crear estructuras:
         # 1. Dict con datos existentes por clave
         # 2. Set para verificar duplicados exactos
-        existing_keys = {}  # key: (date, store_name, sku_padre, sku_vtex) -> value: {'id': X, 'units': Y, 'hectolitros': Z, ...}
+        # key: (date, store_name, sku_padre, sku_vtex) -> value: {'id': X, 'units': Y, 'hectolitros': Z, ...}
+        existing_keys = {}
         exact_duplicates = set()  # Set de hash completo para duplicados exactos
-        
+
         for record in existing_records_query:
-            key = (record['date'], record['store_name'], record['sku_padre'], record['sku_vtex'])
+            key = (record['date'], record['store_name'],
+                   record['sku_padre'], record['sku_vtex'])
             existing_keys[key] = {
                 'id': record['id'],
                 'units': record['units'],
@@ -579,29 +653,31 @@ class SalesReportProcessorView(APIView):
         def classify_record(row):
             id_key = row['_id_key']
             full_key = row['_full_key']
-            
+
             # Si el hash completo existe, es duplicado exacto
             if full_key in exact_duplicates:
                 return 'exact_duplicate'
-            
+
             # Si existe la clave pero con diferentes valores, necesita actualización
             if id_key in existing_keys:
                 existing_data = existing_keys[id_key]
                 current_units = row['units']
                 current_hl = row['hectolitros']
-                
+
                 # Comparar valores principales (units y hectolitros)
                 existing_units = existing_data['units'] or 0
                 existing_hl = existing_data['hectolitros']
-                existing_hl_val = float(existing_hl) if existing_hl is not None else 0.0
-                current_hl_val = float(current_hl) if pd.notna(current_hl) else 0.0
-                
+                existing_hl_val = float(
+                    existing_hl) if existing_hl is not None else 0.0
+                current_hl_val = float(current_hl) if pd.notna(
+                    current_hl) else 0.0
+
                 # Si algún valor cambió, es UPDATE
                 if existing_units != current_units or abs(existing_hl_val - current_hl_val) > 0.001:
                     return 'update'
                 else:
                     return 'exact_duplicate'
-            
+
             # Si no existe, es nuevo
             return 'new'
 
@@ -610,12 +686,13 @@ class SalesReportProcessorView(APIView):
         # Separar DataFrames - mantener índices originales
         new_records_mask = df_check['_classification'] == 'new'
         update_records_mask = df_check['_classification'] == 'update'
-        exact_duplicates_count = (df_check['_classification'] == 'exact_duplicate').sum()
+        exact_duplicates_count = (
+            df_check['_classification'] == 'exact_duplicate').sum()
 
         # Usar los índices para filtrar el DataFrame original
         new_records_df = df.loc[new_records_mask].copy()
         update_records_df = df.loc[update_records_mask].copy()
-        
+
         # Agregar ID del registro a actualizar usando los índices
         if len(update_records_df) > 0:
             # Obtener las claves de ID de df_check para los registros que se van a actualizar
@@ -641,7 +718,7 @@ class SalesReportProcessorView(APIView):
         """
         if len(df) == 0:
             return 0
-        
+
         total_rows = len(df)
         if settings.DEBUG:
             print(f"💾 Guardando {total_rows} registros en histórico...")
@@ -729,20 +806,22 @@ class SalesReportProcessorView(APIView):
         if records_to_create:
             total_saved = 0
             chunk_size = 1000  # Chunks más pequeños para mejor manejo de memoria
-            total_chunks = (len(records_to_create) + chunk_size - 1) // chunk_size
-            
+            total_chunks = (len(records_to_create) +
+                            chunk_size - 1) // chunk_size
+
             for i in range(0, len(records_to_create), chunk_size):
                 chunk = records_to_create[i:i + chunk_size]
                 SalesRecord.objects.bulk_create(chunk, batch_size=500)
                 total_saved += len(chunk)
-                
+
                 if settings.DEBUG and total_chunks > 1:
                     current_chunk = (i // chunk_size) + 1
-                    print(f"   📊 Progreso: {total_saved}/{len(records_to_create)} registros ({int(total_saved/len(records_to_create)*100)}%)")
-            
+                    print(
+                        f"   📊 Progreso: {total_saved}/{len(records_to_create)} registros ({int(total_saved/len(records_to_create)*100)}%)")
+
             if settings.DEBUG:
                 print(f"   ✅ {total_saved} registros insertados exitosamente")
-            
+
             return total_saved
 
         return 0
@@ -765,7 +844,8 @@ class SalesReportProcessorView(APIView):
 
         if '_existing_id' not in df.columns:
             if settings.DEBUG:
-                print("   ⚠️ DataFrame no contiene columna '_existing_id', no se pueden actualizar registros")
+                print(
+                    "   ⚠️ DataFrame no contiene columna '_existing_id', no se pueden actualizar registros")
             return 0
 
         # Función para convertir Decimal/float de pandas a Python
@@ -775,7 +855,7 @@ class SalesReportProcessorView(APIView):
             if isinstance(val, (np.integer, np.floating)):
                 return Decimal(str(float(val)))
             return Decimal(str(val))
-        
+
         def safe_int(val):
             if pd.isna(val):
                 return None
@@ -786,7 +866,7 @@ class SalesReportProcessorView(APIView):
 
         # Obtener todos los IDs a actualizar
         existing_ids = df['_existing_id'].dropna().astype(int).tolist()
-        
+
         if not existing_ids:
             if settings.DEBUG:
                 print("   ⚠️ No hay IDs válidos para actualizar")
@@ -794,59 +874,63 @@ class SalesReportProcessorView(APIView):
 
         # Obtener registros existentes de la BD
         existing_records = {
-            record.id: record 
+            record.id: record
             for record in SalesRecord.objects.filter(id__in=existing_ids)
         }
 
         if settings.DEBUG:
-            print(f"   📊 Registros encontrados en BD: {len(existing_records)} de {len(existing_ids)} solicitados")
+            print(
+                f"   📊 Registros encontrados en BD: {len(existing_records)} de {len(existing_ids)} solicitados")
 
         # Iterar sobre el DataFrame y actualizar valores
         for _, row in df.iterrows():
             existing_id = int(row['_existing_id'])
-            
+
             if existing_id not in existing_records:
                 if settings.DEBUG:
-                    print(f"   ⚠️ Registro ID {existing_id} no encontrado en BD, saltando...")
+                    print(
+                        f"   ⚠️ Registro ID {existing_id} no encontrado en BD, saltando...")
                 continue
 
             record = existing_records[existing_id]
-            
+
             # Nuevos valores
             new_units = safe_int(row.get('units'))
             new_hectolitros = safe_decimal(row.get('hectolitros'))
             new_orders = safe_int(row.get('orders'))
             new_dolars = safe_decimal(row.get('dolars'))
-            
+
             # Verificar si algún valor cambió
             changed = False
             changes_detail = []
-            
+
             if new_units is not None and record.units != new_units:
                 changes_detail.append(f"units {record.units} → {new_units}")
                 record.units = new_units
                 changed = True
-                
+
             if new_hectolitros is not None and record.hectolitros != new_hectolitros:
-                changes_detail.append(f"HL {record.hectolitros} → {new_hectolitros}")
+                changes_detail.append(
+                    f"HL {record.hectolitros} → {new_hectolitros}")
                 record.hectolitros = new_hectolitros
                 changed = True
-                
+
             if new_orders is not None and record.orders != new_orders:
                 changes_detail.append(f"orders {record.orders} → {new_orders}")
                 record.orders = new_orders
                 changed = True
-                
+
             if new_dolars is not None and record.dolars != new_dolars:
                 changes_detail.append(f"$ {record.dolars} → {new_dolars}")
                 record.dolars = new_dolars
                 changed = True
-            
+
             if changed:
                 records_to_update.append(record)
-                
+
                 if settings.DEBUG:
-                    print(f"   🔄 Actualizando ID {existing_id}: {', '.join(changes_detail)}")
+                    print(
+                        f"   🔄 Actualizando ID {existing_id}: {', '.join(changes_detail)}")
 
         # Realizar actualización en batch con chunks para grandes volúmenes
         if records_to_update:
@@ -854,7 +938,7 @@ class SalesReportProcessorView(APIView):
                 total_to_update = len(records_to_update)
                 chunk_size = 1000
                 total_updated = 0
-                
+
                 # Procesar en chunks
                 for i in range(0, total_to_update, chunk_size):
                     chunk = records_to_update[i:i + chunk_size]
@@ -864,14 +948,16 @@ class SalesReportProcessorView(APIView):
                         batch_size=500
                     )
                     total_updated += len(chunk)
-                    
+
                     if settings.DEBUG and total_to_update > chunk_size:
-                        print(f"   📊 Progreso actualización: {total_updated}/{total_to_update} ({int(total_updated/total_to_update*100)}%)")
-                
+                        print(
+                            f"   📊 Progreso actualización: {total_updated}/{total_to_update} ({int(total_updated/total_to_update*100)}%)")
+
                 updated_count = total_updated
-                
+
                 if settings.DEBUG:
-                    print(f"   ✅ {updated_count} registros actualizados exitosamente")
+                    print(
+                        f"   ✅ {updated_count} registros actualizados exitosamente")
             except Exception as e:
                 if settings.DEBUG:
                     print(f"   ❌ Error al actualizar registros: {str(e)}")
@@ -950,18 +1036,19 @@ class SalesReportProcessorView(APIView):
         # Aplicar la búsqueda de POC
         poc_data = df['store_name'].apply(find_poc)
         df = pd.concat([df, poc_data], axis=1)
-        
+
         # Separar registros sin POC encontrado
         if '_poc_not_found' in df.columns:
             poc_not_found_mask = df['_poc_not_found'] == True
             unprocessed_poc_df = df[poc_not_found_mask].copy()
-            
+
             if len(unprocessed_poc_df) > 0:
                 # Agregar columna de error
                 unprocessed_poc_df['error_reason'] = unprocessed_poc_df['store_name'].apply(
-                    lambda x: f'POC no encontrado: {x}' if pd.notna(x) else 'POC no encontrado: store_name vacío'
+                    lambda x: f'POC no encontrado: {x}' if pd.notna(
+                        x) else 'POC no encontrado: store_name vacío'
                 )
-                
+
                 # Mapear a columnas originales del Excel si existen
                 if 'original_date' in unprocessed_poc_df.columns:
                     unprocessed_poc_df['Date Hierarchy - Date'] = unprocessed_poc_df['original_date']
@@ -969,12 +1056,12 @@ class SalesReportProcessorView(APIView):
                     unprocessed_poc_df['product_spk'] = unprocessed_poc_df['original_product_spk']
                     unprocessed_poc_df['# Units'] = unprocessed_poc_df['original_units']
                     unprocessed_poc_df['# Orders'] = unprocessed_poc_df['original_orders']
-                    
+
                     unprocessed_poc_df = unprocessed_poc_df[[
-                        'Date Hierarchy - Date', 'STORE_NAME', 'product_spk', 
+                        'Date Hierarchy - Date', 'STORE_NAME', 'product_spk',
                         '# Units', '# Orders', 'error_reason'
                     ]]
-            
+
             # Filtrar registros con POC encontrado para continuar procesamiento
             df = df[~poc_not_found_mask].copy()
             df = df.drop('_poc_not_found', axis=1)
@@ -1108,12 +1195,14 @@ class SalesReportProcessorView(APIView):
                         else:
                             # Material no encontrado en productos_compra - REGISTRAR ERROR
                             error_row = row_dict.copy()
-                            error_row['error_reason'] = f'SKU hijo (material) no encontrado: {material_code}'
+                            error_row[
+                                'error_reason'] = f'SKU hijo (material) no encontrado: {material_code}'
                             unprocessed_rows.append(error_row)
                 else:
                     # Producto encontrado pero sin materiales (caso raro) - REGISTRAR ERROR
                     error_row = row_dict.copy()
-                    error_row['error_reason'] = f'SKU padre encontrado pero sin materiales asociados: {sku}'
+                    error_row[
+                        'error_reason'] = f'SKU padre encontrado pero sin materiales asociados: {sku}'
                     unprocessed_rows.append(error_row)
             else:
                 # SKU no encontrado en productos_app - REGISTRAR ERROR
@@ -1130,11 +1219,11 @@ class SalesReportProcessorView(APIView):
         # Limpiar columna temporal
         if 'sku_str' in expanded_df.columns:
             expanded_df = expanded_df.drop('sku_str', axis=1)
-        
+
         # Crear DataFrame de registros no procesados (manteniendo columnas originales del Excel)
         if unprocessed_rows:
             unprocessed_df = pd.DataFrame(unprocessed_rows)
-            
+
             # Mapear a las columnas originales del Excel
             if 'original_date' in unprocessed_df.columns:
                 unprocessed_df['Date Hierarchy - Date'] = unprocessed_df['original_date']
@@ -1142,13 +1231,16 @@ class SalesReportProcessorView(APIView):
                 unprocessed_df['product_spk'] = unprocessed_df['original_product_spk']
                 unprocessed_df['# Units'] = unprocessed_df['original_units']
                 unprocessed_df['# Orders'] = unprocessed_df['original_orders']
-                
+
                 # Mantener solo las columnas originales del Excel + error_reason
-                unprocessed_df = unprocessed_df[['Date Hierarchy - Date', 'STORE_NAME', 'product_spk', '# Units', '# Orders', 'error_reason']]
+                unprocessed_df = unprocessed_df[[
+                    'Date Hierarchy - Date', 'STORE_NAME', 'product_spk', '# Units', '# Orders', 'error_reason']]
             else:
                 # Fallback si no hay columnas originales
-                original_columns = ['date', 'store_name', 'sku', 'units', 'orders']
-                cols_to_keep = [col for col in original_columns if col in unprocessed_df.columns]
+                original_columns = [
+                    'date', 'store_name', 'sku', 'units', 'orders']
+                cols_to_keep = [
+                    col for col in original_columns if col in unprocessed_df.columns]
                 cols_to_keep.append('error_reason')
                 unprocessed_df = unprocessed_df[cols_to_keep]
         else:
@@ -1411,7 +1503,8 @@ class SalesReportLogsListView(APIView):
             paginated_queryset = paginator.paginate_queryset(queryset, request)
 
             # Contar registros devueltos para el log
-            records_count = len(paginated_queryset) if paginated_queryset else 0
+            records_count = len(
+                paginated_queryset) if paginated_queryset else 0
 
             # Serializar resultados
             results = []
@@ -1450,7 +1543,8 @@ class SalesReportLogsListView(APIView):
             except Exception as log_error:
                 # No fallar la operación si falla el log
                 if settings.DEBUG:
-                    print(f"⚠️ Error creando log de consulta: {str(log_error)}")
+                    print(
+                        f"⚠️ Error creando log de consulta: {str(log_error)}")
 
             # Retornar respuesta paginada
             return paginator.get_paginated_response(results)
@@ -1602,7 +1696,8 @@ class SalesRecordHistoryStatsView(APIView):
         # Calcular costo basado en CANTIDAD DE CONSULTAS
         # El precio se interpreta como costo por consulta
         if price_instance and total_queries:
-            unit_price = Decimal(str(price_instance.value))  # precio por consulta
+            unit_price = Decimal(str(price_instance.value)
+                                 )  # precio por consulta
             total_cost = unit_price * Decimal(str(total_queries))
             price_month = price_instance.month.strftime('%Y-%m')
         else:
@@ -1702,7 +1797,8 @@ class SalesRecordHistoryListView(APIView):
             paginated_queryset = paginator.paginate_queryset(queryset, request)
 
             # Contar registros devueltos para el log
-            records_count = len(paginated_queryset) if paginated_queryset else 0
+            records_count = len(
+                paginated_queryset) if paginated_queryset else 0
 
             # Serializar resultados
             results = []
@@ -1762,7 +1858,8 @@ class SalesRecordHistoryListView(APIView):
             except Exception as log_error:
                 # No fallar la operación si falla el log
                 if settings.DEBUG:
-                    print(f"⚠️ Error creando log de consulta: {str(log_error)}")
+                    print(
+                        f"⚠️ Error creando log de consulta: {str(log_error)}")
 
             # Retornar respuesta paginada
             return paginator.get_paginated_response(results)
@@ -1894,6 +1991,36 @@ class SalesRecordHistoryDownloadView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
+        # Convertir tipos de datos ANTES de renombrar para asegurar tipos correctos
+        # Columnas que deben ser enteros
+        int_columns = ['orders', 'units', 'week', 'year', 'month', 'day']
+        for col in int_columns:
+            if col in df.columns:
+                df[col] = pd.to_numeric(
+                    df[col], errors='coerce').fillna(0).astype('Int64')
+
+        # unidades_por_caja puede ser decimal o entero, convertir a entero si no tiene decimales
+        if 'unidades_por_caja' in df.columns:
+            df['unidades_por_caja'] = pd.to_numeric(
+                df['unidades_por_caja'], errors='coerce').fillna(0).astype('Int64')
+
+        # Columnas que deben ser decimales/float con 2 decimales
+        float_columns_2 = ['units_assigned',
+                           'units_per_sku', 'venta_pack', 'dolars']
+        for col in float_columns_2:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce').round(2)
+
+        # Columnas que requieren 5 decimales (mililitros y hectolitros)
+        float_columns_5 = ['mililitros', 'hectolitros']
+        for col in float_columns_5:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce').round(5)
+
+        # Convertir fecha a string en formato YYYY-MM-DD para evitar problemas de zona horaria
+        if 'date' in df.columns:
+            df['date'] = pd.to_datetime(df['date']).dt.strftime('%Y-%m-%d')
+
         # Renombrar columnas a español
         df = df.rename(columns={
             'date': 'fecha',
@@ -1949,6 +2076,35 @@ class SalesRecordHistoryDownloadView(APIView):
             # Obtener worksheet para formato
             worksheet = writer.sheets['Histórico Ventas']
 
+            # Importar estilos de openpyxl para formato de números
+            from openpyxl.styles import numbers
+
+            # Mapeo de columnas en español a su formato
+            column_formats = {
+                'pedidos': numbers.FORMAT_NUMBER,  # Entero sin decimales
+                'unidades': numbers.FORMAT_NUMBER,  # Entero sin decimales
+                'unidades_asignadas': numbers.FORMAT_NUMBER_00,  # Decimal con 2 decimales
+                'unidades_por_sku': numbers.FORMAT_NUMBER_00,  # Decimal con 2 decimales
+                'unidades_por_caja': numbers.FORMAT_NUMBER,  # Entero sin decimales
+                'venta_pack': numbers.FORMAT_NUMBER_00,  # Decimal con 2 decimales
+                'mililitros': '0.00000',  # Decimal con 5 decimales
+                'hectolitros': '0.00000',  # Decimal con 5 decimales
+                'dolares': numbers.FORMAT_NUMBER_00,  # Decimal con 2 decimales
+                'semana': numbers.FORMAT_NUMBER,  # Entero sin decimales
+                'año': numbers.FORMAT_NUMBER,  # Entero sin decimales
+                'mes': numbers.FORMAT_NUMBER,  # Entero sin decimales
+                'dia': numbers.FORMAT_NUMBER  # Entero sin decimales
+            }
+
+            # Aplicar formatos a las columnas
+            header_row = [cell.value for cell in worksheet[1]]
+            for col_idx, col_name in enumerate(header_row, start=1):
+                if col_name in column_formats:
+                    column_letter = worksheet.cell(1, col_idx).column_letter
+                    for row in range(2, worksheet.max_row + 1):
+                        cell = worksheet[f'{column_letter}{row}']
+                        cell.number_format = column_formats[col_name]
+
             # Auto-ajustar ancho de columnas
             for column in worksheet.columns:
                 max_length = 0
@@ -1995,7 +2151,7 @@ class SalesUploadLogView(APIView):
     def get(self, request):
         """
         Obtener información del último upload de ventas.
-        
+
         Returns:
             {
                 "last_upload": {
