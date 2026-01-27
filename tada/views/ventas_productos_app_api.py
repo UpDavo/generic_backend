@@ -511,12 +511,12 @@ class VentasProductosAppDownloadAllView(APIView):
         data = []
         for producto in productos:
             # Build materials string in format: CODE1:qty1,CODE2:qty2
+            materials = VentasProductosAppMaterial.objects.filter(
+                ventas_productos_app=producto
+            ).select_related('ventas_productos_compra')
+            
             materials_str = ''
-            if producto.type == 'combo':
-                materials = VentasProductosAppMaterial.objects.filter(
-                    ventas_productos_app=producto
-                ).select_related('ventas_productos_compra')
-                
+            if materials.exists():
                 materials_list = [
                     f"{mat.ventas_productos_compra.code}:{mat.quantity}"
                     for mat in materials
