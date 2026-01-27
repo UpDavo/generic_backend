@@ -206,27 +206,34 @@ class SalesReportProcessorView(APIView):
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
                     # SHEET 1: Registros procesados (nuevos)
                     spanish_columns = {
-                        'poc_id': 'id_poc',
-                        'poc_name': 'nombre_poc',
-                        'poc_homolo': 'poc_homologado',
-                        'poc_city': 'ciudad_poc',
-                        'poc_region': 'region_poc',
-                        'orders': 'pedidos',
-                        'units': 'unidades',
-                        'name': 'nombre',
-                        'name_homologated': 'nombre_homologado',
-                        'category': 'categoria',
-                        'brand': 'marca',
-                        'units_assigned': 'unidades_asignadas',
-                        'units_per_sku': 'unidades_por_sku',
-                        'dolars': 'dolares',
-                        'date': 'fecha',
-                        'week': 'semana',
-                        'year': 'año',
-                        'month': 'mes',
-                        'day': 'dia',
-                        'dayname': 'nombre_dia',
-                        'year_month': 'año_mes'
+                        'date': 'FECHA',
+                        'store_name': 'STORE_NAME',
+                        'poc_id': 'POC',
+                        'poc_name': 'POC NAME',
+                        'poc_city': 'CITY',
+                        'poc_region': 'REGION',
+                        'sku_padre': 'SKU VTEX',
+                        'nombre_padre': 'NAME VTEX',
+                        'sku_vtex': 'COD. HOM',
+                        'name': 'NOM. HOM.',
+                        'name_homologated': 'HOMOLOGO SKU',
+                        'category': 'CATEGORY',
+                        'brand': 'Brand',
+                        'retornable': 'Container Description',
+                        'orders': '# Orders',
+                        'units': '# Units',
+                        'units_per_sku': 'VENTA UNITARIA',
+                        'unidades_por_caja': 'Unidades por caja',
+                        'venta_pack': 'VENTA PACK',
+                        'mililitros': 'CC',
+                        'hectolitros': 'HL',
+                        'dolars': 'DOLARES',
+                        'week': 'Week',
+                        'year': 'YEAR',
+                        'month': 'MONTH',
+                        'day': 'DAY',
+                        'dayname': 'DAY NAME',
+                        'year_month': 'YEAR-MONTH'
                     }
 
                     # Crear copia para Excel con columnas en español
@@ -272,19 +279,18 @@ class SalesReportProcessorView(APIView):
                     worksheet = writer.sheets['Registros Nuevos']
                     
                     column_formats = {
-                        'pedidos': numbers.FORMAT_NUMBER,
-                        'unidades': numbers.FORMAT_NUMBER,
-                        'unidades_asignadas': numbers.FORMAT_NUMBER_00,
-                        'unidades_por_sku': numbers.FORMAT_NUMBER_00,
-                        'unidades_por_caja': numbers.FORMAT_NUMBER,
-                        'venta_pack': numbers.FORMAT_NUMBER_00,
-                        'mililitros': '0.00000',
-                        'hectolitros': '0.00000',
-                        'dolares': numbers.FORMAT_NUMBER_00,
-                        'semana': numbers.FORMAT_NUMBER,
-                        'año': numbers.FORMAT_NUMBER,
-                        'mes': numbers.FORMAT_NUMBER,
-                        'dia': numbers.FORMAT_NUMBER
+                        '# Orders': numbers.FORMAT_NUMBER,
+                        '# Units': numbers.FORMAT_NUMBER,
+                        'VENTA UNITARIA': numbers.FORMAT_NUMBER_00,
+                        'Unidades por caja': numbers.FORMAT_NUMBER,
+                        'VENTA PACK': numbers.FORMAT_NUMBER_00,
+                        'CC': '0.00000',
+                        'HL': '0.00000',
+                        'DOLARES': numbers.FORMAT_NUMBER_00,
+                        'Week': numbers.FORMAT_NUMBER,
+                        'YEAR': numbers.FORMAT_NUMBER,
+                        'MONTH': numbers.FORMAT_NUMBER,
+                        'DAY': numbers.FORMAT_NUMBER
                     }
                     
                     # Aplicar formatos a las columnas
@@ -2023,28 +2029,36 @@ class SalesRecordHistoryDownloadView(APIView):
 
         # Renombrar columnas a español
         df = df.rename(columns={
-            'date': 'fecha',
-            'store_name': 'tienda_original',
-            'poc_id': 'id_poc',
-            'poc_name': 'nombre_poc',
+            'date': 'FECHA',
+            'store_name': 'STORE_NAME',
+            'poc_id': 'POC',
+            'poc_name': 'POC NAME',
             'poc_homolo': 'poc_homologado',
-            'poc_city': 'ciudad_poc',
-            'poc_region': 'region_poc',
-            'orders': 'pedidos',
-            'units': 'unidades',
-            'units_assigned': 'unidades_asignadas',
-            'units_per_sku': 'unidades_por_sku',
-            'dolars': 'dolares',
-            'week': 'semana',
-            'year': 'año',
-            'month': 'mes',
-            'day': 'dia',
-            'dayname': 'nombre_dia',
-            'year_month': 'año_mes',
-            'name': 'nombre',
-            'name_homologated': 'nombre_homologado',
-            'category': 'categoria',
-            'brand': 'marca'
+            'poc_city': 'CITY',
+            'poc_region': 'REGION',
+            'sku_padre': 'SKU VTEX',
+            'nombre_padre': 'NAME VTEX',
+            'sku_vtex': 'COD. HOM',
+            'name': 'NOM. HOM.',
+            'name_homologated': 'HOMOLOGO SKU',
+            'category': 'CATEGORY',
+            'brand': 'Brand',
+            'retornable': 'Container Description',
+            'orders': '# Orders',
+            'units': '# Units',
+            'units_assigned': 'units_assigned',
+            'units_per_sku': 'VENTA UNITARIA',
+            'unidades_por_caja': 'Unidades por caja',
+            'venta_pack': 'VENTA PACK',
+            'mililitros': 'CC',
+            'hectolitros': 'HL',
+            'dolars': 'DOLARES',
+            'week': 'Week',
+            'year': 'YEAR',
+            'month': 'MONTH',
+            'day': 'DAY',
+            'dayname': 'DAY NAME',
+            'year_month': 'YEAR-MONTH'
         })
 
         # Crear log de la descarga con tipo SALES_CHECK
@@ -2081,19 +2095,19 @@ class SalesRecordHistoryDownloadView(APIView):
 
             # Mapeo de columnas en español a su formato
             column_formats = {
-                'pedidos': numbers.FORMAT_NUMBER,  # Entero sin decimales
-                'unidades': numbers.FORMAT_NUMBER,  # Entero sin decimales
-                'unidades_asignadas': numbers.FORMAT_NUMBER_00,  # Decimal con 2 decimales
-                'unidades_por_sku': numbers.FORMAT_NUMBER_00,  # Decimal con 2 decimales
-                'unidades_por_caja': numbers.FORMAT_NUMBER,  # Entero sin decimales
-                'venta_pack': numbers.FORMAT_NUMBER_00,  # Decimal con 2 decimales
-                'mililitros': '0.00000',  # Decimal con 5 decimales
-                'hectolitros': '0.00000',  # Decimal con 5 decimales
-                'dolares': numbers.FORMAT_NUMBER_00,  # Decimal con 2 decimales
-                'semana': numbers.FORMAT_NUMBER,  # Entero sin decimales
-                'año': numbers.FORMAT_NUMBER,  # Entero sin decimales
-                'mes': numbers.FORMAT_NUMBER,  # Entero sin decimales
-                'dia': numbers.FORMAT_NUMBER  # Entero sin decimales
+                '# Orders': numbers.FORMAT_NUMBER,  # Entero sin decimales
+                '# Units': numbers.FORMAT_NUMBER,  # Entero sin decimales
+                'units_assigned': numbers.FORMAT_NUMBER_00,  # Decimal con 2 decimales
+                'VENTA UNITARIA': numbers.FORMAT_NUMBER_00,  # Decimal con 2 decimales
+                'Unidades por caja': numbers.FORMAT_NUMBER,  # Entero sin decimales
+                'VENTA PACK': numbers.FORMAT_NUMBER_00,  # Decimal con 2 decimales
+                'CC': '0.00000',  # Decimal con 5 decimales
+                'HL': '0.00000',  # Decimal con 5 decimales
+                'DOLARES': numbers.FORMAT_NUMBER_00,  # Decimal con 2 decimales
+                'Week': numbers.FORMAT_NUMBER,  # Entero sin decimales
+                'YEAR': numbers.FORMAT_NUMBER,  # Entero sin decimales
+                'MONTH': numbers.FORMAT_NUMBER,  # Entero sin decimales
+                'DAY': numbers.FORMAT_NUMBER  # Entero sin decimales
             }
 
             # Aplicar formatos a las columnas
