@@ -640,3 +640,30 @@ class VentasProductosCompraCategoriesView(APIView):
             'count': len(category_list),
             'categories': category_list
         }, status=status.HTTP_200_OK)
+
+
+class VentasProductosCompraBrandsView(APIView):
+    """
+    View to get a list of unique brands from VentasProductosCompra.
+    Returns only non-null, non-empty brands for dropdown lists.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        """
+        Get list of unique brands.
+        """
+        # Get distinct brands, excluding null and empty values
+        brands = VentasProductosCompra.objects.filter(
+            brand__isnull=False
+        ).exclude(
+            brand=''
+        ).values_list('brand', flat=True).distinct().order_by('brand')
+
+        # Convert to list and return
+        brand_list = list(brands)
+
+        return Response({
+            'count': len(brand_list),
+            'brands': brand_list
+        }, status=status.HTTP_200_OK)

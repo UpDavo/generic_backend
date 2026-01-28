@@ -160,6 +160,10 @@ urlpatterns = [
     path('sales-upload/last/', SalesUploadLogView.as_view(),
          name='sales-upload-last'),
     
+    # Eliminar registros de ventas por rango de fechas
+    path('sales-record/delete-by-date/', SalesRecordDeleteByDateRangeView.as_view(),
+         name='sales-record-delete-by-date'),
+    
 
     # VentasProductosCompra (CRUD completo)
     path('ventas-productos-compra/', VentasProductosCompraListCreateView.as_view(),
@@ -168,6 +172,8 @@ urlpatterns = [
          name='ventas-productos-compra-search'),
     path('ventas-productos-compra/categories/', VentasProductosCompraCategoriesView.as_view(),
          name='ventas-productos-compra-categories'),
+    path('ventas-productos-compra/brands/', VentasProductosCompraBrandsView.as_view(),
+         name='ventas-productos-compra-brands'),
     path('ventas-productos-compra/<int:pk>/',
          VentasProductosCompraRetrieveUpdateDestroyView.as_view(), name='ventas-productos-compra-detail'),
     path('ventas-productos-compra/bulk-create-excel/', VentasProductosCompraBulkCreateFromExcelView.as_view(),

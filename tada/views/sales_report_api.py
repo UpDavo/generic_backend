@@ -2217,3 +2217,121 @@ class SalesUploadLogView(APIView):
             },
             status=status.HTTP_200_OK
         )
+
+
+class SalesRecordDeleteByDateRangeView(APIView):
+    """
+    Vista para eliminar registros de SalesRecord por rango de fechas.
+    El rango máximo permitido es de 31 días.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request):
+        """
+        Eliminar registros de SalesRecord en un rango de fechas.
+        
+        Query params:
+        - start_date: Fecha inicial (formato YYYY-MM-DD)
+        - end_date: Fecha final (formato YYYY-MM-DD)
+        
+        El rango máximo permitido es de 31 días.
+        """
+        # Capturar tiempo de inicio
+        start_time = time.time()
+        
+        start_date_str = request.query_params.get('start_date')
+        end_date_str = request.query_params.get('end_date')
+
+        # Validar que se proporcionen ambas fechas
+        if not start_date_str or not end_date_str:
+            return Response(
+                {'error': 'Se requieren los parámetros start_date y end_date en formato YYYY-MM-DD'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Parse dates
+        try:
+            start_date = parse_date(start_date_str)
+            end_date = parse_date(end_date_str)
+        except (ValueError, TypeError):
+            return Response(
+                {'error': 'Formato de fecha inválido. Use YYYY-MM-DD'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not start_date or not end_date:
+            return Response(
+                {'error': 'Formato de fecha inválido. Use YYYY-MM-DD'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Validar que start_date sea menor o igual a end_date
+        if start_date > end_date:
+            return Response(
+                {'error': 'La fecha inicial debe ser menor o igual a la fecha final'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Validar que el rango no sea mayor a 31 días
+        date_diff = (end_date - start_date).days
+        if date_diff > 31:
+            return Response(
+                {'error': f'El rango de fechas no puede ser mayor a 31 días. Rango actual: {date_diff} días'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Contar registros que serán eliminados
+        records_to_delete = SalesRecord.objects.filter(
+            date__gte=start_date,
+            date__lte=end_date,
+            deleted_at__isnull=True
+        )
+
+        total_records = records_to_delete.count()
+
+        if total_records == 0:
+            return Response(
+                {
+                    'message': 'No se encontraron registros en el rango de fechas especificado',
+                    'start_date': start_date_str,
+                    'end_date': end_date_str,
+                    'records_deleted': 0
+                },
+                status=status.HTTP_200_OK
+            )
+
+        # Eliminar registros (soft delete marcando deleted_at)
+        deleted_count = records_to_delete.update(
+            deleted_at=timezone.now(),
+            deleted_by=request.user
+        )
+
+        # Calcular tiempo de procesamiento
+        end_time = time.time()
+        processing_duration = Decimal(str(round(end_time - start_time, 3)))
+
+        # Crear log del procesamiento con tiempo de ejecución
+        SalesReportLog.objects.create(
+            filename=f'DELETE_RECORDS_{start_date_str}_to_{end_date_str}',
+            rows_processed=deleted_count,
+            date=now().date(),
+            time=now().time(),
+            processing_time_seconds=processing_duration,
+            app=str(APPS['SALES']),
+            user=request.user
+        )
+
+        if settings.DEBUG:
+            print(f"🗑️ Eliminados {deleted_count} registros en {processing_duration}s")
+
+        return Response(
+            {
+                'message': f'Se eliminaron {deleted_count} registros exitosamente',
+                'start_date': start_date_str,
+                'end_date': end_date_str,
+                'records_deleted': deleted_count,
+                'date_range_days': date_diff,
+                'processing_time_seconds': float(processing_duration)
+            },
+            status=status.HTTP_200_OK
+        )
