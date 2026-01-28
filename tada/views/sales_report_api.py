@@ -238,34 +238,41 @@ class SalesReportProcessorView(APIView):
 
                     # Crear copia para Excel con columnas en español
                     excel_df = new_records_df.copy()
-                    
+
                     # Convertir tipos de datos ANTES de renombrar para asegurar tipos correctos
                     # Columnas que deben ser enteros
-                    int_columns = ['orders', 'units', 'week', 'year', 'month', 'day']
+                    int_columns = ['orders', 'units',
+                                   'week', 'year', 'month', 'day']
                     for col in int_columns:
                         if col in excel_df.columns:
-                            excel_df[col] = pd.to_numeric(excel_df[col], errors='coerce').fillna(0).astype('Int64')
-                    
+                            excel_df[col] = pd.to_numeric(
+                                excel_df[col], errors='coerce').fillna(0).astype('Int64')
+
                     # unidades_por_caja puede ser decimal o entero, convertir a entero si no tiene decimales
                     if 'unidades_por_caja' in excel_df.columns:
-                        excel_df['unidades_por_caja'] = pd.to_numeric(excel_df['unidades_por_caja'], errors='coerce').fillna(0).astype('Int64')
-                    
+                        excel_df['unidades_por_caja'] = pd.to_numeric(
+                            excel_df['unidades_por_caja'], errors='coerce').fillna(0).astype('Int64')
+
                     # Columnas que deben ser decimales/float con 2 decimales
-                    float_columns_2 = ['units_assigned', 'units_per_sku', 'venta_pack', 'dolars']
+                    float_columns_2 = ['units_assigned',
+                                       'units_per_sku', 'venta_pack', 'dolars']
                     for col in float_columns_2:
                         if col in excel_df.columns:
-                            excel_df[col] = pd.to_numeric(excel_df[col], errors='coerce').round(2)
-                    
+                            excel_df[col] = pd.to_numeric(
+                                excel_df[col], errors='coerce').round(2)
+
                     # Columnas que requieren 5 decimales (mililitros y hectolitros)
                     float_columns_5 = ['mililitros', 'hectolitros']
                     for col in float_columns_5:
                         if col in excel_df.columns:
-                            excel_df[col] = pd.to_numeric(excel_df[col], errors='coerce').round(5)
-                    
+                            excel_df[col] = pd.to_numeric(
+                                excel_df[col], errors='coerce').round(5)
+
                     # Convertir fecha a string en formato YYYY-MM-DD para evitar problemas de zona horaria
                     if 'date' in excel_df.columns:
-                        excel_df['date'] = pd.to_datetime(excel_df['date']).dt.strftime('%Y-%m-%d')
-                    
+                        excel_df['date'] = pd.to_datetime(
+                            excel_df['date']).dt.strftime('%Y-%m-%d')
+
                     columns_to_rename = {
                         k: v for k, v in spanish_columns.items() if k in excel_df.columns
                     }
@@ -273,12 +280,15 @@ class SalesReportProcessorView(APIView):
 
                     excel_df.to_excel(
                         writer, index=False, sheet_name='Registros Nuevos')
-                    
+
                     # Aplicar formatos de números a las columnas
                     from openpyxl.styles import numbers
                     worksheet = writer.sheets['Registros Nuevos']
-                    
+
                     column_formats = {
+                        'POC': numbers.FORMAT_NUMBER,
+                        'SKU VTEX': numbers.FORMAT_NUMBER,
+                        'COD. HOM': numbers.FORMAT_NUMBER,
                         '# Orders': numbers.FORMAT_NUMBER,
                         '# Units': numbers.FORMAT_NUMBER,
                         'VENTA UNITARIA': numbers.FORMAT_NUMBER_00,
@@ -292,12 +302,13 @@ class SalesReportProcessorView(APIView):
                         'MONTH': numbers.FORMAT_NUMBER,
                         'DAY': numbers.FORMAT_NUMBER
                     }
-                    
+
                     # Aplicar formatos a las columnas
                     header_row = [cell.value for cell in worksheet[1]]
                     for col_idx, col_name in enumerate(header_row, start=1):
                         if col_name in column_formats:
-                            column_letter = worksheet.cell(1, col_idx).column_letter
+                            column_letter = worksheet.cell(
+                                1, col_idx).column_letter
                             for row in range(2, worksheet.max_row + 1):
                                 cell = worksheet[f'{column_letter}{row}']
                                 cell.number_format = column_formats[col_name]
@@ -2095,6 +2106,9 @@ class SalesRecordHistoryDownloadView(APIView):
 
             # Mapeo de columnas en español a su formato
             column_formats = {
+                'POC': numbers.FORMAT_NUMBER,
+                'SKU VTEX': numbers.FORMAT_NUMBER,
+                'COD. HOM': numbers.FORMAT_NUMBER,
                 '# Orders': numbers.FORMAT_NUMBER,  # Entero sin decimales
                 '# Units': numbers.FORMAT_NUMBER,  # Entero sin decimales
                 'units_assigned': numbers.FORMAT_NUMBER_00,  # Decimal con 2 decimales
