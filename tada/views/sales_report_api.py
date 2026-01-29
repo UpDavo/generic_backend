@@ -2280,16 +2280,15 @@ class SalesRecordDeleteByDateRangeView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Contar registros que serán eliminados
-        records_to_delete = SalesRecord.objects.filter(
+        # Eliminar registros permanentemente (bypass soft delete usando _base_manager)
+        # _base_manager ignora el custom manager y va directo a la BD
+        deleted_count, _ = SalesRecord._base_manager.filter(
             date__gte=start_date,
             date__lte=end_date,
             deleted_at__isnull=True
-        )
+        ).delete()
 
-        total_records = records_to_delete.count()
-
-        if total_records == 0:
+        if deleted_count == 0:
             return Response(
                 {
                     'message': 'No se encontraron registros en el rango de fechas especificado',
@@ -2299,12 +2298,6 @@ class SalesRecordDeleteByDateRangeView(APIView):
                 },
                 status=status.HTTP_200_OK
             )
-
-        # Eliminar registros (soft delete marcando deleted_at)
-        deleted_count = records_to_delete.update(
-            deleted_at=timezone.now(),
-            deleted_by=request.user
-        )
 
         # Calcular tiempo de procesamiento
         end_time = time.time()
