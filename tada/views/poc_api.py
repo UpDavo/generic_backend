@@ -21,6 +21,15 @@ from tada.serializers import (
 )
 
 
+class CustomPageNumberPagination(PageNumberPagination):
+    """
+    Custom pagination class that allows configuring page_size via query params.
+    """
+    page_size = 10  # Default page size
+    page_size_query_param = 'page_size'  # Allow client to set page size
+    max_page_size = 1000  # Maximum limit
+
+
 def remove_accents(text):
     """Remove accents from text."""
     if not text:
@@ -87,7 +96,7 @@ class POCListCreateView(APIView):
     View to list all POCs or create a new one.
     """
     permission_classes = [IsAuthenticated]
-    pagination_class = PageNumberPagination
+    pagination_class = CustomPageNumberPagination
 
     def get(self, request):
         """

@@ -17,3 +17,4 @@ from .ventas_productos_app_api import *
 from .poc_api import *
 from .top_skus_region_weekly_api import *
 from .hectolitres_yearly_comparison_api import *
+from .negativos_justificacion_api import *

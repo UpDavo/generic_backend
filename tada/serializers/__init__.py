@@ -41,3 +41,10 @@ from .poc_serializer import (
     POCCreateSerializer,
     POCUpdateSerializer
 )
+from .negativos_justificacion_serializer import (
+    NegativosJustificacionSerializer,
+    NegativosJustificacionSimpleSerializer,
+    NegativosJustificacionListSerializer,
+    NegativosJustificacionCreateSerializer,
+    NegativosJustificacionUpdateSerializer
+)

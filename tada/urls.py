@@ -197,6 +197,20 @@ urlpatterns = [
     path('ventas-productos-app/download-all/', VentasProductosAppDownloadAllView.as_view(),
          name='ventas-productos-app-download-all'),
 
+    # NegativosJustificacion (CRUD completo)
+    path('negativos-justificacion/', NegativosJustificacionListCreateView.as_view(),
+         name='negativos-justificacion-list-create'),
+    path('negativos-justificacion/search/', NegativosJustificacionSearchView.as_view(),
+         name='negativos-justificacion-search'),
+    path('negativos-justificacion/<int:pk>/',
+         NegativosJustificacionRetrieveUpdateDestroyView.as_view(), name='negativos-justificacion-detail'),
+    path('negativos-justificacion/bulk-create-excel/', NegativosJustificacionBulkCreateFromExcelView.as_view(),
+         name='negativos-justificacion-bulk-create-excel'),
+    path('negativos-justificacion/download-template/', NegativosJustificacionDownloadTemplateView.as_view(),
+         name='negativos-justificacion-download-template'),
+    path('negativos-justificacion/download-all/', NegativosJustificacionDownloadAllView.as_view(),
+         name='negativos-justificacion-download-all'),
+
     # POC (CRUD completo)
     path('pocs/', POCListCreateView.as_view(),
          name='poc-list-create'),
