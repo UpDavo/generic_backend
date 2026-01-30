@@ -40,27 +40,25 @@ def remove_accents(text):
 
 
 def clean_text(value):
-    """Clean text: remove accents, convert to lowercase, handle N/A."""
+    """Clean text: convert to lowercase, handle N/A. Preserves accents, ñ, and special characters."""
     if pd.isna(value) or str(value).upper() in ['N/A', 'NA', 'NAN', 'NONE']:
         return None
     text = str(value).strip()
     if not text:
         return None
-    # Remove accents and convert to lowercase
-    text = remove_accents(text)
+    # Preserve original text with accents, just clean whitespace and lowercase
     text = text.lower()
     return text
 
 
 def clean_text_keep_case(value):
-    """Clean text: remove accents but keep original case, handle N/A."""
+    """Clean text: keep original case, handle N/A. Preserves accents, ñ, and special characters."""
     if pd.isna(value) or str(value).upper() in ['N/A', 'NA', 'NAN', 'NONE']:
         return None
     text = str(value).strip()
     if not text:
         return None
-    # Remove accents but keep case
-    text = remove_accents(text)
+    # Preserve original text with accents and case
     return text
 
 
@@ -70,22 +68,23 @@ def clean_region(value):
         return None
     
     value_str = str(value).strip().lower()
-    value_str = remove_accents(value_str)
+    # Use remove_accents only for comparison, not for the final value
+    value_normalized = remove_accents(value_str)
     
     # Map different variations to valid regions
     valid_regions = ['costa', 'sierra', 'oriente', 'insular']
     
-    if value_str in valid_regions:
-        return value_str
+    if value_normalized in valid_regions:
+        return value_normalized
     
     # Try to match variations
-    if value_str in ['litoral', 'costa region', 'region costa']:
+    if value_normalized in ['litoral', 'costa region', 'region costa']:
         return 'costa'
-    elif value_str in ['andes', 'andina', 'sierra region', 'region sierra']:
+    elif value_normalized in ['andes', 'andina', 'sierra region', 'region sierra']:
         return 'sierra'
-    elif value_str in ['amazonia', 'oriente region', 'region oriente', 'oriental']:
+    elif value_normalized in ['amazonia', 'oriente region', 'region oriente', 'oriental']:
         return 'oriente'
-    elif value_str in ['galapagos', 'insular region', 'region insular', 'islas']:
+    elif value_normalized in ['galapagos', 'insular region', 'region insular', 'islas']:
         return 'insular'
     
     return None

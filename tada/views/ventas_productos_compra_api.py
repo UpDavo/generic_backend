@@ -31,16 +31,16 @@ def remove_accents(text):
     return ''.join([c for c in nfd if unicodedata.category(c) != 'Mn'])
 
 
-def clean_text(value):
-    """Clean text: remove accents, convert to lowercase, handle N/A."""
+def clean_text(value, preserve_case=False):
+    """Clean text: handle N/A, trim spaces. Preserves accents, ñ, and special characters."""
     if pd.isna(value) or str(value).upper() in ['N/A', 'NA', 'NAN', 'NONE']:
         return None
     text = str(value).strip()
     if not text:
         return None
-    # Remove accents and convert to lowercase
-    text = remove_accents(text)
-    text = text.lower()
+    # Preserve original text with accents, just clean whitespace
+    if not preserve_case:
+        text = text.lower()
     return text
 
 
@@ -90,12 +90,13 @@ def clean_origen(value):
         return None
 
     value_str = str(value).strip().lower()
-    value_str = remove_accents(value_str)
+    # Normalize for comparison but preserve original meaning
+    value_normalized = remove_accents(value_str)
 
     # Map different variations to valid choices
-    if value_str in ['nacional', 'local', 'produccion local', 'nacional local', 'domestico']:
+    if value_normalized in ['nacional', 'local', 'produccion local', 'nacional local', 'domestico']:
         return 'nacional'
-    elif value_str in ['importado', 'importacion', 'import', 'extranjero', 'internacional']:
+    elif value_normalized in ['importado', 'importacion', 'import', 'extranjero', 'internacional']:
         return 'importado'
 
     return None
@@ -107,13 +108,12 @@ def clean_boolean(value):
         return False
 
     value_str = str(value).strip().lower()
-    value_str = remove_accents(value_str)  # Remove accents from 'sí'
-
+    # Check both with and without accent for 'sí'
     return value_str in ['true', '1', 'yes', 'si', 'sí', 's', 'y']
 
 
 def clean_code(value):
-    """Clean code: can be text or numbers, uppercase, no accents."""
+    """Clean code: can be text or numbers, uppercase. Preserves special characters."""
     if pd.isna(value) or str(value).upper() in ['N/A', 'NA', 'NAN', 'NONE']:
         return None
 
@@ -121,8 +121,7 @@ def clean_code(value):
     if not code:
         return None
 
-    # Remove accents but keep uppercase
-    code = remove_accents(code)
+    # Keep uppercase, preserve special characters like ñ and accents
     return code.upper()
 
 
