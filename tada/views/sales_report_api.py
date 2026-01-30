@@ -2328,3 +2328,223 @@ class SalesRecordDeleteByDateRangeView(APIView):
             },
             status=status.HTTP_200_OK
         )
+
+
+class SalesReportWhatsAppView(APIView):
+    """
+    Vista para enviar reportes de ventas por WhatsApp.
+    
+    Recibe una imagen en base64 y un título. La imagen se sube a S3 y se envía
+    a todos los números configurados con el tipo de notificación SALES_REPORT.
+    
+    Límite: Máximo 10 envíos por día para evitar spam.
+    Usa SalesReportLog para contar los usos (persistente en BD).
+    """
+    permission_classes = [IsAuthenticated]
+    
+    # Configuración de rate limit
+    DAILY_LIMIT = 10
+
+    def _get_daily_usage_count(self):
+        """
+        Obtiene el contador de usos del día actual usando la BD.
+        Cuenta los registros de SalesReportLog con filename que empiece con 'WHATSAPP_REPORT_'
+        creados hoy.
+        """
+        today = now().date()
+        
+        count = SalesReportLog.objects.filter(
+            date=today,
+            filename__startswith='WHATSAPP_REPORT_',
+            deleted_at__isnull=True
+        ).count()
+        
+        return count
+
+    def _log_whatsapp_send(self, user, title, success_count, processing_time_seconds):
+        """Registra el envío en la BD para tracking del rate limit."""
+        SalesReportLog.objects.create(
+            filename=f'WHATSAPP_REPORT_{title[:50]}',
+            rows_processed=success_count,
+            date=now().date(),
+            time=now().time(),
+            processing_time_seconds=processing_time_seconds,
+            app=str(APPS['SALES']),
+            user=user
+        )
+
+    def _get_remaining_uses(self):
+        """Retorna los usos restantes del día."""
+        count = self._get_daily_usage_count()
+        return max(0, self.DAILY_LIMIT - count)
+
+    def post(self, request):
+        """
+        Enviar reporte de ventas por WhatsApp.
+
+        Body params:
+        - image (str): Imagen en base64 (requerido). Puede incluir el prefijo data:image/...;base64, o solo los datos base64
+        - title (str): Título del reporte (requerido)
+        - custom_message (str): Mensaje personalizado adicional (opcional)
+        - include_timestamp (bool): Incluir fecha/hora en el mensaje (default: true)
+
+        Returns:
+            Response con el resultado del envío incluyendo la URL de la imagen subida
+            
+        Rate Limit:
+            Máximo 10 envíos por día. Retorna 429 si se excede el límite.
+        """
+        from tada.services.sales_report_service import SalesReportService
+
+        # Verificar rate limit
+        current_count = self._get_daily_usage_count()
+        
+        if current_count >= self.DAILY_LIMIT:
+            return Response(
+                {
+                    'error': f'Límite diario alcanzado. Máximo {self.DAILY_LIMIT} envíos por día.',
+                    'daily_limit': self.DAILY_LIMIT,
+                    'current_usage': current_count,
+                    'remaining': 0,
+                    'reset_at': 'medianoche'
+                },
+                status=status.HTTP_429_TOO_MANY_REQUESTS
+            )
+
+        # Validar parámetros requeridos
+        image_base64 = request.data.get('image')
+        title = request.data.get('title')
+        custom_message = request.data.get('custom_message')
+        include_timestamp = request.data.get('include_timestamp', True)
+
+        if not image_base64:
+            return Response(
+                {'error': 'Se requiere el parámetro "image" con la imagen en base64'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not title:
+            return Response(
+                {'error': 'Se requiere el parámetro "title"'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Validar que sea base64 válido (verificación básica)
+        try:
+            # Si tiene prefijo data:image, extraer solo la parte base64
+            test_data = image_base64
+            if ',' in test_data:
+                test_data = test_data.split(',', 1)[1]
+            
+            # Intentar decodificar para validar
+            import base64
+            base64.b64decode(test_data)
+        except Exception:
+            return Response(
+                {'error': 'La imagen proporcionada no es un base64 válido'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            import time
+            start_time = time.time()
+            
+            # Crear instancia del servicio
+            service = SalesReportService()
+
+            # Enviar el reporte
+            if custom_message:
+                result = service.send_sales_report_with_custom_message(
+                    image_base64=image_base64,
+                    title=title,
+                    custom_message=custom_message,
+                    include_timestamp=include_timestamp
+                )
+            else:
+                result = service.send_sales_report_by_whatsapp(
+                    image_base64=image_base64,
+                    title=title
+                )
+
+            # Calcular tiempo de procesamiento
+            end_time = time.time()
+            processing_duration = Decimal(str(round(end_time - start_time, 3)))
+            
+            # Determinar el código de estado según el resultado
+            if result['success']:
+                # Registrar el envío exitoso en la BD (para rate limit)
+                self._log_whatsapp_send(request.user, title, len(result['success']), processing_duration)
+                remaining = self._get_remaining_uses()
+                
+                return Response(
+                    {
+                        'message': result['message'],
+                        'image_url': result.get('image_url'),
+                        'success_count': len(result['success']),
+                        'failed_count': len(result['failed']),
+                        'total_numbers': result['total_numbers'],
+                        'success_numbers': result['success'],
+                        'failed_numbers': result['failed'],
+                        'daily_limit': self.DAILY_LIMIT,
+                        'remaining_today': remaining
+                    },
+                    status=status.HTTP_200_OK
+                )
+            elif result['total_numbers'] == 0:
+                return Response(
+                    {
+                        'message': result['message'],
+                        'image_url': result.get('image_url'),
+                        'success_count': 0,
+                        'failed_count': 0,
+                        'total_numbers': 0,
+                        'daily_limit': self.DAILY_LIMIT,
+                        'remaining_today': self._get_remaining_uses()
+                    },
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            else:
+                return Response(
+                    {
+                        'message': result['message'],
+                        'image_url': result.get('image_url'),
+                        'success_count': len(result['success']),
+                        'failed_count': len(result['failed']),
+                        'total_numbers': result['total_numbers'],
+                        'failed_numbers': result['failed'],
+                        'daily_limit': self.DAILY_LIMIT,
+                        'remaining_today': self._get_remaining_uses()
+                    },
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+        except Exception as e:
+            if settings.DEBUG:
+                print(f"❌ Error al enviar reporte por WhatsApp: {str(e)}")
+                import traceback
+                traceback.print_exc()
+
+            return Response(
+                {'error': f'Error al enviar el reporte: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def get(self, request):
+        """
+        Obtener información del rate limit actual.
+        
+        Returns:
+            Response con el estado actual del límite diario
+        """
+        remaining = self._get_remaining_uses()
+        current_count = self._get_daily_usage_count()
+        
+        return Response(
+            {
+                'daily_limit': self.DAILY_LIMIT,
+                'current_usage': current_count,
+                'remaining_today': remaining,
+                'reset_at': 'medianoche'
+            },
+            status=status.HTTP_200_OK
+        )

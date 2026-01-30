@@ -149,6 +149,10 @@ urlpatterns = [
     path('sales-report-logs/', SalesReportLogsListView.as_view(),
          name='sales-report-logs-list'),
     
+    # Sales Report Processor OPTIMIZADO (bajo consumo de RAM)
+    path('sales-report/process-optimized/', OptimizedSalesReportProcessorView.as_view(),
+         name='sales-report-process-optimized'),
+    
     
     #Descargar y listar historico de procesamientos
     path('sales-record/history/', SalesRecordHistoryListView.as_view(),
@@ -163,6 +167,18 @@ urlpatterns = [
     # Eliminar registros de ventas por rango de fechas
     path('sales-record/delete-by-date/', SalesRecordDeleteByDateRangeView.as_view(),
          name='sales-record-delete-by-date'),
+    
+    # Eliminar registros OPTIMIZADO (SQL directo)
+    path('sales-record/delete-by-date-optimized/', OptimizedSalesRecordDeleteByDateRangeView.as_view(),
+         name='sales-record-delete-by-date-optimized'),
+    
+    # TRUNCATE completo de la tabla (PELIGROSO - usar con cuidado)
+    path('sales-record/truncate/', OptimizedBulkTruncateView.as_view(),
+         name='sales-record-truncate'),
+    
+    # Enviar reporte de ventas por WhatsApp
+    path('sales-report/send-whatsapp/', SalesReportWhatsAppView.as_view(),
+         name='sales-report-send-whatsapp'),
     
 
     # VentasProductosCompra (CRUD completo)
