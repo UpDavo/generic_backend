@@ -4,6 +4,7 @@ Servicio para envío de reportes de ventas por WhatsApp.
 
 import base64
 import uuid
+import time
 from datetime import datetime
 from io import BytesIO
 
@@ -147,8 +148,8 @@ class SalesReportService:
 
             print(f"📱 Enviando reporte de ventas a {len(phone_numbers)} números...")
 
-            # Enviar mensaje a cada número
-            for phone_number in phone_numbers:
+            # Enviar mensaje a cada número con delay entre envíos
+            for idx, phone_number in enumerate(phone_numbers):
                 try:
                     response_data, response = self.whatsapp_service.send_message(
                         to=phone_number,
@@ -172,6 +173,11 @@ class SalesReportService:
                         'error': str(e)
                     })
                     print(f"   ❌ Excepción al enviar a {phone_number}: {e}")
+                
+                # Delay de 5 segundos entre envíos (excepto después del último)
+                if idx < len(phone_numbers) - 1:
+                    print(f"   ⏳ Esperando 5 segundos antes del siguiente envío...")
+                    time.sleep(5)
 
             # Construir mensaje de resultado
             if results['success']:
@@ -252,8 +258,8 @@ class SalesReportService:
 
             print(f"📱 Enviando reporte de ventas personalizado a {len(phone_numbers)} números...")
 
-            # Enviar mensaje a cada número
-            for phone_number in phone_numbers:
+            # Enviar mensaje a cada número con delay entre envíos
+            for idx, phone_number in enumerate(phone_numbers):
                 try:
                     response_data, response = self.whatsapp_service.send_message(
                         to=phone_number,
@@ -277,6 +283,11 @@ class SalesReportService:
                         'error': str(e)
                     })
                     print(f"   ❌ Excepción al enviar a {phone_number}: {e}")
+                
+                # Delay de 5 segundos entre envíos (excepto después del último)
+                if idx < len(phone_numbers) - 1:
+                    print(f"   ⏳ Esperando 5 segundos antes del siguiente envío...")
+                    time.sleep(5)
 
             # Construir mensaje de resultado
             if results['success']:

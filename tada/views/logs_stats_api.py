@@ -3,6 +3,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from django.db.models import Count, Q
+from django.utils.timezone import make_aware
 from decimal import Decimal
 from datetime import datetime
 from django.utils.dateparse import parse_datetime
@@ -76,8 +77,8 @@ class NotificationLogsStatsView(APIView):
             try:
                 start_datetime = parse_datetime(start_date)
                 if not start_datetime:
-                    # Si no incluye hora, agregar 00:00:00
-                    start_datetime = datetime.strptime(start_date, '%Y-%m-%d')
+                    # Si no incluye hora, agregar 00:00:00 y hacer timezone-aware
+                    start_datetime = make_aware(datetime.strptime(start_date, '%Y-%m-%d'))
                 date_filters &= Q(sent_at__gte=start_datetime)
             except ValueError:
                 return Response({"error": "Formato de start_date inválido. Use YYYY-MM-DD o YYYY-MM-DDTHH:MM:SS"},
@@ -87,9 +88,9 @@ class NotificationLogsStatsView(APIView):
             try:
                 end_datetime = parse_datetime(end_date)
                 if not end_datetime:
-                    # Si no incluye hora, agregar 23:59:59
-                    end_datetime = datetime.strptime(
-                        end_date, '%Y-%m-%d').replace(hour=23, minute=59, second=59)
+                    # Si no incluye hora, agregar 23:59:59 y hacer timezone-aware
+                    end_datetime = make_aware(datetime.strptime(
+                        end_date, '%Y-%m-%d').replace(hour=23, minute=59, second=59))
                 date_filters &= Q(sent_at__lte=end_datetime)
             except ValueError:
                 return Response({"error": "Formato de end_date inválido. Use YYYY-MM-DD o YYYY-MM-DDTHH:MM:SS"},
@@ -256,8 +257,8 @@ class CanvasLogsStatsView(APIView):
             try:
                 start_datetime = parse_datetime(start_date)
                 if not start_datetime:
-                    # Si no incluye hora, agregar 00:00:00
-                    start_datetime = datetime.strptime(start_date, '%Y-%m-%d')
+                    # Si no incluye hora, agregar 00:00:00 y hacer timezone-aware
+                    start_datetime = make_aware(datetime.strptime(start_date, '%Y-%m-%d'))
                 date_filters &= Q(sent_at__gte=start_datetime)
             except ValueError:
                 return Response({"error": "Formato de start_date inválido. Use YYYY-MM-DD o YYYY-MM-DDTHH:MM:SS"},
@@ -267,9 +268,9 @@ class CanvasLogsStatsView(APIView):
             try:
                 end_datetime = parse_datetime(end_date)
                 if not end_datetime:
-                    # Si no incluye hora, agregar 23:59:59
-                    end_datetime = datetime.strptime(
-                        end_date, '%Y-%m-%d').replace(hour=23, minute=59, second=59)
+                    # Si no incluye hora, agregar 23:59:59 y hacer timezone-aware
+                    end_datetime = make_aware(datetime.strptime(
+                        end_date, '%Y-%m-%d').replace(hour=23, minute=59, second=59))
                 date_filters &= Q(sent_at__lte=end_datetime)
             except ValueError:
                 return Response({"error": "Formato de end_date inválido. Use YYYY-MM-DD o YYYY-MM-DDTHH:MM:SS"},

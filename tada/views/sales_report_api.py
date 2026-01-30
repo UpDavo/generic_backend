@@ -2343,7 +2343,7 @@ class SalesReportWhatsAppView(APIView):
     permission_classes = [IsAuthenticated]
     
     # Configuración de rate limit
-    DAILY_LIMIT = 10
+    DAILY_LIMIT = 20
 
     def _get_daily_usage_count(self):
         """
