@@ -142,6 +142,12 @@ urlpatterns = [
          name='hectolitres-yearly-comparison'),
     path('hectolitres/yearly-comparison/download/', HectolitresYearlyComparisonReportDownloadView.as_view(),
          name='hectolitres-yearly-comparison-download'),
+    
+    # Datos manuales para comparativa anual
+    path('manual-yearly-data/', ManualYearlyDataListCreateView.as_view(),
+         name='manual-yearly-data-list-create'),
+    path('manual-yearly-data/<int:pk>/', ManualYearlyDataDetailView.as_view(),
+         name='manual-yearly-data-detail'),
 
     # Sales Report Processor
     path('sales-report/process/', SalesReportProcessorView.as_view(),

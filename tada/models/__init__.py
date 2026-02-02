@@ -18,3 +18,4 @@ from .salesRecord import SalesRecord
 from .salesRecordQueryLog import SalesRecordQueryLog
 from .salesUploadLog import SalesUploadLog
 from .negativosJustificacion import NegativosJustificacion
+from .manualYearlyData import ManualYearlyData

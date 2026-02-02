@@ -9,7 +9,7 @@ from io import BytesIO
 from decimal import Decimal
 import pandas as pd
 
-from tada.models import SalesRecord, SalesRecordQueryLog
+from tada.models import SalesRecord, SalesRecordQueryLog, ManualYearlyData
 from tada.utils.constants import APPS
 
 
@@ -119,8 +119,8 @@ class HectolitresYearlyComparisonReportView(APIView):
 
         Returns:
             dict: {
-                "totals": {"2024": 1500.50, "2025": 1800.75, ...},
-                "cities": {"Lima": {"2024": 800.25, "2025": 950.50}, ...}
+                "totals": {"2024": {"value": 1500.50, "is_manual": false, "manual_id": null}, ...},
+                "cities": {"Lima": {"2024": {"value": 800.25, "is_manual": false, "manual_id": null}, ...}, ...}
             }
         """
         from django.db.models import F, ExpressionWrapper, DecimalField
@@ -129,84 +129,132 @@ class HectolitresYearlyComparisonReportView(APIView):
         cities_data = {}
 
         for year in range(start_year, end_year + 1):
-            if report_type == 'hectolitros':
-                # Suma total de hectolitros
-                result = SalesRecord.objects.filter(
-                    deleted_at__isnull=True,
-                    year=year,
-                    week__gte=start_week,
-                    week__lte=end_week,
-                    hectolitros__isnull=False
-                ).aggregate(
-                    total=Sum('hectolitros')
-                )
-                total = result['total'] or Decimal('0')
+            # Primero, verificar si hay datos manuales para este período
+            manual_total = ManualYearlyData.objects.filter(
+                deleted_at__isnull=True,
+                year=year,
+                start_week=start_week,
+                end_week=end_week,
+                report_type=report_type,
+                city__isnull=True  # Total general
+            ).first()
+            
+            manual_cities = ManualYearlyData.objects.filter(
+                deleted_at__isnull=True,
+                year=year,
+                start_week=start_week,
+                end_week=end_week,
+                report_type=report_type,
+                city__isnull=False  # Datos por ciudad
+            )
+            
+            # Si hay datos manuales, usarlos; de lo contrario, calcular desde SalesRecord
+            if manual_total or manual_cities.exists():
+                # Usar datos manuales
+                total = manual_total.value if manual_total else Decimal('0')
+                total_data = {
+                    'value': round(float(total), 2),
+                    'is_manual': True,
+                    'manual_id': manual_total.id if manual_total else None
+                }
+                totals[str(year)] = total_data
                 
-                # Suma por ciudad
-                city_results = SalesRecord.objects.filter(
-                    deleted_at__isnull=True,
-                    year=year,
-                    week__gte=start_week,
-                    week__lte=end_week,
-                    hectolitros__isnull=False,
-                    poc_city__isnull=False
-                ).values('poc_city').annotate(
-                    total=Sum('hectolitros')
-                ).order_by('poc_city')
-                
-            else:  # caja
-                # Calcular cajas: (orders * units_assigned) / unidades_por_caja
-                records = SalesRecord.objects.filter(
-                    deleted_at__isnull=True,
-                    year=year,
-                    week__gte=start_week,
-                    week__lte=end_week,
-                    unidades_por_caja__isnull=False,
-                    unidades_por_caja__gt=0,
-                    orders__isnull=False,
-                    units_assigned__isnull=False
-                ).annotate(
-                    cajas=ExpressionWrapper(
-                        (F('orders') * F('units_assigned')) / F('unidades_por_caja'),
-                        output_field=DecimalField()
+                for manual_city in manual_cities:
+                    city_name = manual_city.city
+                    if city_name not in cities_data:
+                        cities_data[city_name] = {}
+                    cities_data[city_name][str(year)] = {
+                        'value': round(float(manual_city.value), 2),
+                        'is_manual': True,
+                        'manual_id': manual_city.id
+                    }
+                    
+            else:
+                # Calcular desde SalesRecord (lógica existente)
+                if report_type == 'hectolitros':
+                    # Suma total de hectolitros
+                    result = SalesRecord.objects.filter(
+                        deleted_at__isnull=True,
+                        year=year,
+                        week__gte=start_week,
+                        week__lte=end_week,
+                        hectolitros__isnull=False
+                    ).aggregate(
+                        total=Sum('hectolitros')
                     )
-                ).aggregate(
-                    total=Sum('cajas')
-                )
-                total = records['total'] or Decimal('0')
-                
-                # Suma por ciudad
-                city_results = SalesRecord.objects.filter(
-                    deleted_at__isnull=True,
-                    year=year,
-                    week__gte=start_week,
-                    week__lte=end_week,
-                    unidades_por_caja__isnull=False,
-                    unidades_por_caja__gt=0,
-                    orders__isnull=False,
-                    units_assigned__isnull=False,
-                    poc_city__isnull=False
-                ).values('poc_city').annotate(
-                    cajas=Sum(
-                        ExpressionWrapper(
+                    total = result['total'] or Decimal('0')
+                    
+                    # Suma por ciudad
+                    city_results = SalesRecord.objects.filter(
+                        deleted_at__isnull=True,
+                        year=year,
+                        week__gte=start_week,
+                        week__lte=end_week,
+                        hectolitros__isnull=False,
+                        poc_city__isnull=False
+                    ).values('poc_city').annotate(
+                        total=Sum('hectolitros')
+                    ).order_by('poc_city')
+                    
+                else:  # caja
+                    # Calcular cajas: (orders * units_assigned) / unidades_por_caja
+                    records = SalesRecord.objects.filter(
+                        deleted_at__isnull=True,
+                        year=year,
+                        week__gte=start_week,
+                        week__lte=end_week,
+                        unidades_por_caja__isnull=False,
+                        unidades_por_caja__gt=0,
+                        orders__isnull=False,
+                        units_assigned__isnull=False
+                    ).annotate(
+                        cajas=ExpressionWrapper(
                             (F('orders') * F('units_assigned')) / F('unidades_por_caja'),
                             output_field=DecimalField()
                         )
+                    ).aggregate(
+                        total=Sum('cajas')
                     )
-                ).order_by('poc_city')
+                    total = records['total'] or Decimal('0')
+                    
+                    # Suma por ciudad
+                    city_results = SalesRecord.objects.filter(
+                        deleted_at__isnull=True,
+                        year=year,
+                        week__gte=start_week,
+                        week__lte=end_week,
+                        unidades_por_caja__isnull=False,
+                        unidades_por_caja__gt=0,
+                        orders__isnull=False,
+                        units_assigned__isnull=False,
+                        poc_city__isnull=False
+                    ).values('poc_city').annotate(
+                        cajas=Sum(
+                            ExpressionWrapper(
+                                (F('orders') * F('units_assigned')) / F('unidades_por_caja'),
+                                output_field=DecimalField()
+                            )
+                        )
+                    ).order_by('poc_city')
 
-            # Guardar total del año
-            totals[str(year)] = round(float(total), 2)
-            
-            # Procesar resultados por ciudad
-            for city_item in city_results:
-                city_name = city_item['poc_city']
-                city_total = city_item.get('total') or city_item.get('cajas') or Decimal('0')
-                
-                if city_name not in cities_data:
-                    cities_data[city_name] = {}
-                
-                cities_data[city_name][str(year)] = round(float(city_total), 2)
+                # Guardar total del año (calculado)
+                totals[str(year)] = {
+                    'value': round(float(total), 2),
+                    'is_manual': False
+                }
+
+                # Procesar resultados por ciudad (solo si no hay datos manuales)
+                for city_item in city_results:
+                    city_name = city_item['poc_city']
+                    city_total = city_item.get('total') or city_item.get('cajas') or Decimal('0')
+                    
+                    if city_name not in cities_data:
+                        cities_data[city_name] = {}
+                    
+                    cities_data[city_name][str(year)] = {
+                        'value': round(float(city_total), 2),
+                        'is_manual': False
+                    }
 
         return {
             'totals': totals,
@@ -271,19 +319,23 @@ class HectolitresYearlyComparisonReportDownloadView(APIView):
             start_year, end_year, start_week, end_week, report_type
         )
 
-        # Crear DataFrame para totales
+        # Crear DataFrame para totales (extraer value del nuevo formato)
         column_name = 'Hectolitros' if report_type == 'hectolitros' else 'Cajas'
         df_totals = pd.DataFrame([
-            {'Año': year, column_name: value}
-            for year, value in data['totals'].items()
+            {'Año': year, column_name: year_data['value'], 'Es Manual': year_data['is_manual']}
+            for year, year_data in data['totals'].items()
         ])
         
-        # Crear DataFrame para ciudades
+        # Crear DataFrame para ciudades (extraer value del nuevo formato)
         cities_rows = []
         for city, years_data in data['cities'].items():
             row = {'Ciudad': city}
             for year in range(start_year, end_year + 1):
-                row[str(year)] = years_data.get(str(year), 0.0)
+                year_str = str(year)
+                if year_str in years_data:
+                    row[year_str] = years_data[year_str]['value']
+                else:
+                    row[year_str] = 0.0
             cities_rows.append(row)
         
         df_cities = pd.DataFrame(cities_rows) if cities_rows else pd.DataFrame()
@@ -366,84 +418,132 @@ class HectolitresYearlyComparisonReportDownloadView(APIView):
         cities_data = {}
 
         for year in range(start_year, end_year + 1):
-            if report_type == 'hectolitros':
-                # Suma total de hectolitros
-                result = SalesRecord.objects.filter(
-                    deleted_at__isnull=True,
-                    year=year,
-                    week__gte=start_week,
-                    week__lte=end_week,
-                    hectolitros__isnull=False
-                ).aggregate(
-                    total=Sum('hectolitros')
-                )
-                total = result['total'] or Decimal('0')
+            # Primero, verificar si hay datos manuales para este período
+            manual_total = ManualYearlyData.objects.filter(
+                deleted_at__isnull=True,
+                year=year,
+                start_week=start_week,
+                end_week=end_week,
+                report_type=report_type,
+                city__isnull=True  # Total general
+            ).first()
+            
+            manual_cities = ManualYearlyData.objects.filter(
+                deleted_at__isnull=True,
+                year=year,
+                start_week=start_week,
+                end_week=end_week,
+                report_type=report_type,
+                city__isnull=False  # Datos por ciudad
+            )
+            
+            # Si hay datos manuales, usarlos; de lo contrario, calcular desde SalesRecord
+            if manual_total or manual_cities.exists():
+                # Usar datos manuales
+                total = manual_total.value if manual_total else Decimal('0')
+                total_data = {
+                    'value': round(float(total), 2),
+                    'is_manual': True,
+                    'manual_id': manual_total.id if manual_total else None
+                }
+                totals[str(year)] = total_data
                 
-                # Suma por ciudad
-                city_results = SalesRecord.objects.filter(
-                    deleted_at__isnull=True,
-                    year=year,
-                    week__gte=start_week,
-                    week__lte=end_week,
-                    hectolitros__isnull=False,
-                    poc_city__isnull=False
-                ).values('poc_city').annotate(
-                    total=Sum('hectolitros')
-                ).order_by('poc_city')
-                
-            else:  # caja
-                # Calcular cajas: (orders * units_assigned) / unidades_por_caja
-                records = SalesRecord.objects.filter(
-                    deleted_at__isnull=True,
-                    year=year,
-                    week__gte=start_week,
-                    week__lte=end_week,
-                    unidades_por_caja__isnull=False,
-                    unidades_por_caja__gt=0,
-                    orders__isnull=False,
-                    units_assigned__isnull=False
-                ).annotate(
-                    cajas=ExpressionWrapper(
-                        (F('orders') * F('units_assigned')) / F('unidades_por_caja'),
-                        output_field=DecimalField()
+                for manual_city in manual_cities:
+                    city_name = manual_city.city
+                    if city_name not in cities_data:
+                        cities_data[city_name] = {}
+                    cities_data[city_name][str(year)] = {
+                        'value': round(float(manual_city.value), 2),
+                        'is_manual': True,
+                        'manual_id': manual_city.id
+                    }
+                    
+            else:
+                # Calcular desde SalesRecord (lógica existente)
+                if report_type == 'hectolitros':
+                    # Suma total de hectolitros
+                    result = SalesRecord.objects.filter(
+                        deleted_at__isnull=True,
+                        year=year,
+                        week__gte=start_week,
+                        week__lte=end_week,
+                        hectolitros__isnull=False
+                    ).aggregate(
+                        total=Sum('hectolitros')
                     )
-                ).aggregate(
-                    total=Sum('cajas')
-                )
-                total = records['total'] or Decimal('0')
-                
-                # Suma por ciudad
-                city_results = SalesRecord.objects.filter(
-                    deleted_at__isnull=True,
-                    year=year,
-                    week__gte=start_week,
-                    week__lte=end_week,
-                    unidades_por_caja__isnull=False,
-                    unidades_por_caja__gt=0,
-                    orders__isnull=False,
-                    units_assigned__isnull=False,
-                    poc_city__isnull=False
-                ).values('poc_city').annotate(
-                    cajas=Sum(
-                        ExpressionWrapper(
+                    total = result['total'] or Decimal('0')
+                    
+                    # Suma por ciudad
+                    city_results = SalesRecord.objects.filter(
+                        deleted_at__isnull=True,
+                        year=year,
+                        week__gte=start_week,
+                        week__lte=end_week,
+                        hectolitros__isnull=False,
+                        poc_city__isnull=False
+                    ).values('poc_city').annotate(
+                        total=Sum('hectolitros')
+                    ).order_by('poc_city')
+                    
+                else:  # caja
+                    # Calcular cajas: (orders * units_assigned) / unidades_por_caja
+                    records = SalesRecord.objects.filter(
+                        deleted_at__isnull=True,
+                        year=year,
+                        week__gte=start_week,
+                        week__lte=end_week,
+                        unidades_por_caja__isnull=False,
+                        unidades_por_caja__gt=0,
+                        orders__isnull=False,
+                        units_assigned__isnull=False
+                    ).annotate(
+                        cajas=ExpressionWrapper(
                             (F('orders') * F('units_assigned')) / F('unidades_por_caja'),
                             output_field=DecimalField()
                         )
+                    ).aggregate(
+                        total=Sum('cajas')
                     )
-                ).order_by('poc_city')
+                    total = records['total'] or Decimal('0')
+                    
+                    # Suma por ciudad
+                    city_results = SalesRecord.objects.filter(
+                        deleted_at__isnull=True,
+                        year=year,
+                        week__gte=start_week,
+                        week__lte=end_week,
+                        unidades_por_caja__isnull=False,
+                        unidades_por_caja__gt=0,
+                        orders__isnull=False,
+                        units_assigned__isnull=False,
+                        poc_city__isnull=False
+                    ).values('poc_city').annotate(
+                        cajas=Sum(
+                            ExpressionWrapper(
+                                (F('orders') * F('units_assigned')) / F('unidades_por_caja'),
+                                output_field=DecimalField()
+                            )
+                        )
+                    ).order_by('poc_city')
 
-            # Guardar total del año
-            totals[str(year)] = round(float(total), 2)
-            
-            # Procesar resultados por ciudad
-            for city_item in city_results:
-                city_name = city_item['poc_city']
-                city_total = city_item.get('total') or city_item.get('cajas') or Decimal('0')
-                
-                if city_name not in cities_data:
-                    cities_data[city_name] = {}
-                
-                cities_data[city_name][str(year)] = round(float(city_total), 2)
+                # Guardar total del año (calculado)
+                totals[str(year)] = {
+                    'value': round(float(total), 2),
+                    'is_manual': False
+                }
+
+                # Procesar resultados por ciudad (solo si no hay datos manuales)
+                for city_item in city_results:
+                    city_name = city_item['poc_city']
+                    city_total = city_item.get('total') or city_item.get('cajas') or Decimal('0')
+                    
+                    if city_name not in cities_data:
+                        cities_data[city_name] = {}
+                    
+                    cities_data[city_name][str(year)] = {
+                        'value': round(float(city_total), 2),
+                        'is_manual': False
+                    }
 
         return {
             'totals': totals,
