@@ -20,3 +20,4 @@ from .top_skus_region_weekly_api import *
 from .hectolitres_yearly_comparison_api import *
 from .manual_yearly_data_api import *
 from .negativos_justificacion_api import *
+from .sku_detail_city_poc_weekly_api import *

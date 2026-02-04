@@ -137,6 +137,12 @@ urlpatterns = [
     path('top-skus-region/weekly-report/download/', TopSkusByRegionWeeklyReportDownloadView.as_view(),
          name='top-skus-region-weekly-report-download'),
     
+    # Detalle de SKU específico por ciudad y POC
+    path('sku-detail/city-poc/weekly-report/', SKUDetailByCityPOCWeeklyReportView.as_view(),
+         name='sku-detail-city-poc-weekly-report'),
+    path('sku-detail/city-poc/weekly-report/download/', SKUDetailByCityPOCWeeklyReportDownloadView.as_view(),
+         name='sku-detail-city-poc-weekly-report-download'),
+    
     # Comparativa anual de hectolitros
     path('hectolitres/yearly-comparison/', HectolitresYearlyComparisonReportView.as_view(),
          name='hectolitres-yearly-comparison'),
