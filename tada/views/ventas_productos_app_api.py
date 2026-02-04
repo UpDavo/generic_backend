@@ -498,8 +498,10 @@ class VentasProductosAppDownloadAllView(APIView):
         """
         Download all VentasProductosApp as an Excel file with their materials.
         """
-        # Get all products from database
-        productos = VentasProductosApp.objects.all().order_by('type', 'code')
+        # Get all products with materials prefetched in a single query
+        productos = VentasProductosApp.objects.prefetch_related(
+            'material_items__ventas_productos_compra'
+        ).order_by('type', 'code')
 
         if not productos.exists():
             return Response(
@@ -511,17 +513,12 @@ class VentasProductosAppDownloadAllView(APIView):
         data = []
         for producto in productos:
             # Build materials string in format: CODE1:qty1,CODE2:qty2
-            materials = VentasProductosAppMaterial.objects.filter(
-                ventas_productos_app=producto
-            ).select_related('ventas_productos_compra')
-            
-            materials_str = ''
-            if materials.exists():
-                materials_list = [
-                    f"{mat.ventas_productos_compra.code}:{mat.quantity}"
-                    for mat in materials
-                ]
-                materials_str = ','.join(materials_list)
+            # material_items already prefetched, no additional queries
+            materials_list = [
+                f"{mat.ventas_productos_compra.code}:{mat.quantity}"
+                for mat in producto.material_items.all()
+            ]
+            materials_str = ','.join(materials_list) if materials_list else ''
             
             data.append({
                 'type': producto.type,

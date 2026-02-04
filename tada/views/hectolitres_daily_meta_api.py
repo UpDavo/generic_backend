@@ -356,19 +356,21 @@ class HectolitresDailyMetaBulkCreateFromExcelView(APIView):
 class HectolitresWeeklyReportView(APIView):
     """
     Vista para obtener reporte de hectolitros por semana con metas y cumplimiento.
+    Filtra por rango de fechas y agrupa por semanas (mostrando solo días dentro del rango).
     """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         """
-        Obtener reporte de hectolitros o cajas filtrado por año y semana.
+        Obtener reporte de hectolitros o cajas filtrado por rango de fechas, agrupado por semanas.
 
         Query params:
-        - start_year: Año inicial (requerido)
-        - end_year: Año final (requerido)
-        - start_week: Semana inicial (requerido, 1-53)
-        - end_week: Semana final (requerido, 1-53)
+        - start_date: Fecha inicial en formato YYYY-MM-DD (requerido)
+        - end_date: Fecha final en formato YYYY-MM-DD (requerido)
         - report_type: "hectolitros" o "caja" (opcional, default: hectolitros)
+
+        Ejemplo: start_date=2026-01-01&end_date=2026-01-31
+        Devuelve semanas 1 a 5, pero la semana 5 solo incluye los días hasta el 31.
 
         Returns:
         {
@@ -380,6 +382,7 @@ class HectolitresWeeklyReportView(APIView):
             "w1": {
                 "lun": {
                     "dia": 1,
+                    "fecha": "2026-01-05",
                     "ht": float,
                     "ht_meta": float,
                     "cumplimiento": "XX.XX%"
@@ -390,14 +393,30 @@ class HectolitresWeeklyReportView(APIView):
         }
         """
         # Validar parámetros requeridos
+        start_date_str = request.query_params.get('start_date')
+        end_date_str = request.query_params.get('end_date')
+        
+        if not start_date_str or not end_date_str:
+            return Response(
+                {'error': 'Se requieren parámetros: start_date y end_date en formato YYYY-MM-DD'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
         try:
-            start_year = int(request.query_params.get('start_year'))
-            end_year = int(request.query_params.get('end_year'))
-            start_week = int(request.query_params.get('start_week'))
-            end_week = int(request.query_params.get('end_week'))
+            start_date_obj = parse_date(start_date_str)
+            end_date_obj = parse_date(end_date_str)
+            
+            if not start_date_obj or not end_date_obj:
+                raise ValueError("Formato de fecha inválido")
         except (TypeError, ValueError):
             return Response(
-                {'error': 'Se requieren parámetros válidos: start_year, end_year, start_week, end_week'},
+                {'error': 'Formato de fecha inválido. Use YYYY-MM-DD'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if start_date_obj > end_date_obj:
+            return Response(
+                {'error': 'La fecha inicial no puede ser mayor que la fecha final'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
@@ -409,22 +428,8 @@ class HectolitresWeeklyReportView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Validar rangos
-        if start_week < 1 or start_week > 53 or end_week < 1 or end_week > 53:
-            return Response(
-                {'error': 'Las semanas deben estar entre 1 y 53'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        if start_year > end_year:
-            return Response(
-                {'error': 'El año inicial no puede ser mayor que el año final'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # Generar lista de fechas para el rango de semanas
-        date_ranges = self._generate_date_ranges(
-            start_year, end_year, start_week, end_week)
+        # Generar lista de fechas para el rango, agrupadas por semanas
+        date_ranges = self._generate_date_ranges_from_dates(start_date_obj, end_date_obj)
 
         if not date_ranges:
             return Response(
@@ -434,11 +439,10 @@ class HectolitresWeeklyReportView(APIView):
 
         # Obtener ventas agrupadas por fecha (sumar hectolitros o cajas)
         sales_by_date = self._get_sales_by_date(
-            date_ranges['start_date'], date_ranges['end_date'], report_type)
+            start_date_obj, end_date_obj, report_type)
 
         # Obtener metas por fecha
-        metas_by_date = self._get_metas_by_date(
-            date_ranges['start_date'], date_ranges['end_date'])
+        metas_by_date = self._get_metas_by_date(start_date_obj, end_date_obj)
 
         # Construir respuesta estructurada por semanas
         response_data = self._build_weekly_response(
@@ -456,10 +460,8 @@ class HectolitresWeeklyReportView(APIView):
                 query_type='list',
                 records_returned=total_records,
                 filters_applied={
-                    'start_year': start_year,
-                    'end_year': end_year,
-                    'start_week': start_week,
-                    'end_week': end_week,
+                    'start_date': start_date_str,
+                    'end_date': end_date_str,
                     'report_type': f'hectolitres_weekly_{report_type}'
                 },
                 date=datetime.now().date(),
@@ -473,102 +475,63 @@ class HectolitresWeeklyReportView(APIView):
 
         return Response(response_data, status=status.HTTP_200_OK)
 
-    def _generate_date_ranges(self, start_year, end_year, start_week, end_week):
+    def _generate_date_ranges_from_dates(self, start_date, end_date):
         """
-        Generar las fechas para el rango de semanas especificado.
+        Generar las fechas agrupadas por semanas para un rango de fechas.
+        Solo incluye los días que están dentro del rango especificado.
+
+        Args:
+            start_date: fecha inicial (date object)
+            end_date: fecha final (date object)
 
         Returns:
             dict con 'start_date', 'end_date' y 'weeks_data' (lista de semanas con sus fechas)
         """
         weeks_data = []
-
-        # Caso simple: mismo año
-        if start_year == end_year:
-            for week_num in range(start_week, end_week + 1):
-                week_dates = self._get_week_dates(start_year, week_num)
-                if week_dates:
-                    weeks_data.append({
-                        'year': start_year,
-                        'week': week_num,
-                        'dates': week_dates
-                    })
-        else:
-            # Múltiples años
-            # Año inicial: desde start_week hasta semana 52/53
-            last_week_start_year = date(start_year, 12, 28).isocalendar()[1]
-            for week_num in range(start_week, last_week_start_year + 1):
-                week_dates = self._get_week_dates(start_year, week_num)
-                if week_dates:
-                    weeks_data.append({
-                        'year': start_year,
-                        'week': week_num,
-                        'dates': week_dates
-                    })
-
-            # Años intermedios (si hay)
-            for year in range(start_year + 1, end_year):
-                last_week_year = date(year, 12, 28).isocalendar()[1]
-                for week_num in range(1, last_week_year + 1):
-                    week_dates = self._get_week_dates(year, week_num)
-                    if week_dates:
-                        weeks_data.append({
-                            'year': year,
-                            'week': week_num,
-                            'dates': week_dates
-                        })
-
-            # Año final: desde semana 1 hasta end_week
-            for week_num in range(1, end_week + 1):
-                week_dates = self._get_week_dates(end_year, week_num)
-                if week_dates:
-                    weeks_data.append({
-                        'year': end_year,
-                        'week': week_num,
-                        'dates': week_dates
-                    })
-
+        day_names = ['lun', 'mar', 'mie', 'jue', 'vie', 'sab', 'dom']
+        
+        # Agrupar fechas por semana ISO
+        current_date = start_date
+        current_week_data = None
+        
+        while current_date <= end_date:
+            iso_calendar = current_date.isocalendar()
+            week_num = iso_calendar[1]
+            year = iso_calendar[0]  # año ISO (puede diferir del año calendario)
+            day_of_week = iso_calendar[2] - 1  # 0=lun, 6=dom
+            
+            # Si es una nueva semana, crear nuevo registro
+            if current_week_data is None or current_week_data['week'] != week_num or current_week_data['year'] != year:
+                if current_week_data is not None:
+                    weeks_data.append(current_week_data)
+                
+                current_week_data = {
+                    'year': year,
+                    'week': week_num,
+                    'dates': []
+                }
+            
+            # Agregar el día actual a la semana
+            current_week_data['dates'].append({
+                'date': current_date,
+                'day_name': day_names[day_of_week],
+                'day_number': current_date.day
+            })
+            
+            current_date += timedelta(days=1)
+        
+        # Agregar la última semana
+        if current_week_data is not None and current_week_data['dates']:
+            weeks_data.append(current_week_data)
+        
         if not weeks_data:
             return None
 
-        # Obtener fecha inicial y final global
-        all_dates = []
-        for week_data in weeks_data:
-            all_dates.extend([d['date'] for d in week_data['dates']])
-
         return {
-            'start_date': min(all_dates),
-            'end_date': max(all_dates),
+            'start_date': start_date,
+            'end_date': end_date,
             'weeks_data': weeks_data
         }
-
-    def _get_week_dates(self, year, week_num):
-        """
-        Obtener todas las fechas (lun-dom) de una semana ISO específica.
-
-        Returns:
-            Lista de dicts con 'date', 'day_name', 'day_number'
-        """
-        try:
-            # Obtener el lunes de la semana ISO
-            # ISO week date: el 4 de enero siempre está en la semana 1
-            jan_4 = date(year, 1, 4)
-            week_1_monday = jan_4 - timedelta(days=jan_4.weekday())
-            target_monday = week_1_monday + timedelta(weeks=week_num - 1)
-
-            week_dates = []
-            day_names = ['lun', 'mar', 'mie', 'jue', 'vie', 'sab', 'dom']
-
-            for i in range(7):
-                current_date = target_monday + timedelta(days=i)
-                week_dates.append({
-                    'date': current_date,
-                    'day_name': day_names[i],
-                    'day_number': current_date.day
-                })
-
-            return week_dates
-        except (ValueError, OverflowError):
-            return None
 
     def _get_sales_by_date(self, start_date, end_date, report_type='hectolitros'):
         """
@@ -702,32 +665,50 @@ class HectolitresWeeklyReportView(APIView):
 class HectolitresWeeklyReportDownloadView(APIView):
     """
     Vista para descargar el reporte de hectolitros por semana en Excel.
+    Filtra por rango de fechas y agrupa por semanas (mostrando solo días dentro del rango).
     """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         """
-        Descargar reporte de hectolitros o cajas en Excel filtrado por año y semana.
+        Descargar reporte de hectolitros o cajas en Excel filtrado por rango de fechas.
 
         Query params:
-        - start_year: Año inicial (requerido)
-        - end_year: Año final (requerido)
-        - start_week: Semana inicial (requerido, 1-53)
-        - end_week: Semana final (requerido, 1-53)
+        - start_date: Fecha inicial en formato YYYY-MM-DD (requerido)
+        - end_date: Fecha final en formato YYYY-MM-DD (requerido)
         - report_type: "hectolitros" o "caja" (opcional, default: hectolitros)
+
+        Ejemplo: start_date=2026-01-01&end_date=2026-01-31
+        Devuelve semanas 1 a 5, pero la semana 5 solo incluye los días hasta el 31.
 
         Returns:
         Archivo Excel con el reporte estructurado por semanas
         """
         # Validar parámetros requeridos
+        start_date_str = request.query_params.get('start_date')
+        end_date_str = request.query_params.get('end_date')
+        
+        if not start_date_str or not end_date_str:
+            return Response(
+                {'error': 'Se requieren parámetros: start_date y end_date en formato YYYY-MM-DD'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
         try:
-            start_year = int(request.query_params.get('start_year'))
-            end_year = int(request.query_params.get('end_year'))
-            start_week = int(request.query_params.get('start_week'))
-            end_week = int(request.query_params.get('end_week'))
+            start_date_obj = parse_date(start_date_str)
+            end_date_obj = parse_date(end_date_str)
+            
+            if not start_date_obj or not end_date_obj:
+                raise ValueError("Formato de fecha inválido")
         except (TypeError, ValueError):
             return Response(
-                {'error': 'Se requieren parámetros válidos: start_year, end_year, start_week, end_week'},
+                {'error': 'Formato de fecha inválido. Use YYYY-MM-DD'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if start_date_obj > end_date_obj:
+            return Response(
+                {'error': 'La fecha inicial no puede ser mayor que la fecha final'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
@@ -739,22 +720,8 @@ class HectolitresWeeklyReportDownloadView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Validar rangos
-        if start_week < 1 or start_week > 53 or end_week < 1 or end_week > 53:
-            return Response(
-                {'error': 'Las semanas deben estar entre 1 y 53'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        if start_year > end_year:
-            return Response(
-                {'error': 'El año inicial no puede ser mayor que el año final'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # Generar lista de fechas para el rango de semanas
-        date_ranges = self._generate_date_ranges(
-            start_year, end_year, start_week, end_week)
+        # Generar lista de fechas para el rango, agrupadas por semanas
+        date_ranges = self._generate_date_ranges_from_dates(start_date_obj, end_date_obj)
 
         if not date_ranges:
             return Response(
@@ -764,11 +731,10 @@ class HectolitresWeeklyReportDownloadView(APIView):
 
         # Obtener ventas agrupadas por fecha (sumar hectolitros o cajas)
         sales_by_date = self._get_sales_by_date(
-            date_ranges['start_date'], date_ranges['end_date'], report_type)
+            start_date_obj, end_date_obj, report_type)
 
         # Obtener metas por fecha
-        metas_by_date = self._get_metas_by_date(
-            date_ranges['start_date'], date_ranges['end_date'])
+        metas_by_date = self._get_metas_by_date(start_date_obj, end_date_obj)
 
         # Construir DataFrame para Excel
         df = self._build_excel_dataframe(
@@ -783,10 +749,8 @@ class HectolitresWeeklyReportDownloadView(APIView):
                 query_type='download',
                 records_returned=len(df),
                 filters_applied={
-                    'start_year': start_year,
-                    'end_year': end_year,
-                    'start_week': start_week,
-                    'end_week': end_week,
+                    'start_date': start_date_str,
+                    'end_date': end_date_str,
                     'report_type': f'hectolitres_weekly_{report_type}'
                 },
                 date=datetime.now().date(),
@@ -825,7 +789,7 @@ class HectolitresWeeklyReportDownloadView(APIView):
         # Generar nombre de archivo con timestamp
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         type_file_label = 'hectolitros' if report_type == 'hectolitros' else 'cajas'
-        filename = f'reporte_{type_file_label}_semanal_{start_year}W{start_week}_{end_year}W{end_week}_{timestamp}.xlsx'
+        filename = f'reporte_{type_file_label}_semanal_{start_date_str}_{end_date_str}_{timestamp}.xlsx'
 
         # Crear respuesta HTTP con el archivo Excel
         response = HttpResponse(
@@ -836,93 +800,52 @@ class HectolitresWeeklyReportDownloadView(APIView):
 
         return response
 
-    def _generate_date_ranges(self, start_year, end_year, start_week, end_week):
+    def _generate_date_ranges_from_dates(self, start_date, end_date):
         """
-        Generar las fechas para el rango de semanas especificado.
-        (Mismo método que HectolitresWeeklyReportView)
+        Generar las fechas agrupadas por semanas para un rango de fechas.
+        Solo incluye los días que están dentro del rango especificado.
         """
         weeks_data = []
-
-        # Caso simple: mismo año
-        if start_year == end_year:
-            for week_num in range(start_week, end_week + 1):
-                week_dates = self._get_week_dates(start_year, week_num)
-                if week_dates:
-                    weeks_data.append({
-                        'year': start_year,
-                        'week': week_num,
-                        'dates': week_dates
-                    })
-        else:
-            # Múltiples años
-            last_week_start_year = date(start_year, 12, 28).isocalendar()[1]
-            for week_num in range(start_week, last_week_start_year + 1):
-                week_dates = self._get_week_dates(start_year, week_num)
-                if week_dates:
-                    weeks_data.append({
-                        'year': start_year,
-                        'week': week_num,
-                        'dates': week_dates
-                    })
-
-            for year in range(start_year + 1, end_year):
-                last_week_year = date(year, 12, 28).isocalendar()[1]
-                for week_num in range(1, last_week_year + 1):
-                    week_dates = self._get_week_dates(year, week_num)
-                    if week_dates:
-                        weeks_data.append({
-                            'year': year,
-                            'week': week_num,
-                            'dates': week_dates
-                        })
-
-            for week_num in range(1, end_week + 1):
-                week_dates = self._get_week_dates(end_year, week_num)
-                if week_dates:
-                    weeks_data.append({
-                        'year': end_year,
-                        'week': week_num,
-                        'dates': week_dates
-                    })
-
+        day_names = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
+        
+        current_date = start_date
+        current_week_data = None
+        
+        while current_date <= end_date:
+            iso_calendar = current_date.isocalendar()
+            week_num = iso_calendar[1]
+            year = iso_calendar[0]
+            day_of_week = iso_calendar[2] - 1  # 0=lun, 6=dom
+            
+            if current_week_data is None or current_week_data['week'] != week_num or current_week_data['year'] != year:
+                if current_week_data is not None:
+                    weeks_data.append(current_week_data)
+                
+                current_week_data = {
+                    'year': year,
+                    'week': week_num,
+                    'dates': []
+                }
+            
+            current_week_data['dates'].append({
+                'date': current_date,
+                'day_name': day_names[day_of_week],
+                'day_number': current_date.day
+            })
+            
+            current_date += timedelta(days=1)
+        
+        if current_week_data is not None and current_week_data['dates']:
+            weeks_data.append(current_week_data)
+        
         if not weeks_data:
             return None
 
-        all_dates = []
-        for week_data in weeks_data:
-            all_dates.extend([d['date'] for d in week_data['dates']])
-
         return {
-            'start_date': min(all_dates),
-            'end_date': max(all_dates),
+            'start_date': start_date,
+            'end_date': end_date,
             'weeks_data': weeks_data
         }
-
-    def _get_week_dates(self, year, week_num):
-        """
-        Obtener todas las fechas (lun-dom) de una semana ISO específica.
-        (Mismo método que HectolitresWeeklyReportView)
-        """
-        try:
-            jan_4 = date(year, 1, 4)
-            week_1_monday = jan_4 - timedelta(days=jan_4.weekday())
-            target_monday = week_1_monday + timedelta(weeks=week_num - 1)
-
-            week_dates = []
-            day_names = ['Lunes', 'Martes', 'Miércoles',
-                         'Jueves', 'Viernes', 'Sábado', 'Domingo']
-
-            for i in range(7):
-                current_date = target_monday + timedelta(days=i)
-                week_dates.append({
-                    'date': current_date,
-                    'day_name': day_names[i],
-                    'day_number': current_date.day
-                })
-
-            return week_dates
-        except (ValueError, OverflowError):
-            return None
 
     def _get_sales_by_date(self, start_date, end_date, report_type='hectolitros'):
         """

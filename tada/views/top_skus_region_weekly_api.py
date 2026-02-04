@@ -3,6 +3,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.http import HttpResponse
+from django.utils.dateparse import parse_date
 from datetime import datetime, timedelta, date
 from django.db.models import Sum, Q, F, DecimalField, ExpressionWrapper
 from io import BytesIO
@@ -17,6 +18,7 @@ from tada.utils.constants import APPS
 class TopSkusByRegionWeeklyReportView(APIView):
     """
     Vista para obtener el TOP 5 de SKUs por región y semana.
+    Filtra por rango de fechas y agrupa por semanas (mostrando solo las semanas dentro del rango).
     """
     permission_classes = [IsAuthenticated]
 
@@ -25,15 +27,17 @@ class TopSkusByRegionWeeklyReportView(APIView):
         Obtener TOP 5 SKUs por región y semana con filtros jerárquicos opcionales.
 
         Query params:
-        - start_year: Año inicial (requerido)
-        - end_year: Año final (requerido)
-        - start_week: Semana inicial (requerido, 1-53)
-        - end_week: Semana final (requerido, 1-53)
+        - start_date: Fecha inicial en formato YYYY-MM-DD (requerido)
+        - end_date: Fecha final en formato YYYY-MM-DD (requerido)
         - retornable: "retornable" o "no retornable" (opcional, default: todos)
         - regions: Lista de regiones separadas por coma (opcional, default: todas)
+        - report_type: "hectolitros" o "caja" (opcional, default: hectolitros)
         - group_by_region: "true" o "false" (opcional, default: true) - Agrupar por región
         - group_by_city: "true" o "false" (opcional, default: false) - Agrupar por ciudad (requiere group_by_region)
         - group_by_poc: "true" o "false" (opcional, default: false) - Agrupar por POC (requiere group_by_city)
+
+        Ejemplo: start_date=2026-01-01&end_date=2026-01-31
+        Devuelve semanas 1 a 5, pero la semana 5 solo incluye datos hasta el 31.
 
         Returns:
         {
@@ -49,26 +53,32 @@ class TopSkusByRegionWeeklyReportView(APIView):
             },
             ...
         }
-        O con jerarquía:
-        {
-            "Region A": {
-                "Ciudad 1": {
-                    "POC 1": {
-                        "Producto 1": {...}
-                    }
-                }
-            }
-        }
         """
         # Validar parámetros requeridos
+        start_date_str = request.query_params.get('start_date')
+        end_date_str = request.query_params.get('end_date')
+        
+        if not start_date_str or not end_date_str:
+            return Response(
+                {'error': 'Se requieren parámetros: start_date y end_date en formato YYYY-MM-DD'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
         try:
-            start_year = int(request.query_params.get('start_year'))
-            end_year = int(request.query_params.get('end_year'))
-            start_week = int(request.query_params.get('start_week'))
-            end_week = int(request.query_params.get('end_week'))
+            start_date_obj = parse_date(start_date_str)
+            end_date_obj = parse_date(end_date_str)
+            
+            if not start_date_obj or not end_date_obj:
+                raise ValueError("Formato de fecha inválido")
         except (TypeError, ValueError):
             return Response(
-                {'error': 'start_year, end_year, start_week y end_week son requeridos y deben ser enteros'},
+                {'error': 'Formato de fecha inválido. Use YYYY-MM-DD'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if start_date_obj > end_date_obj:
+            return Response(
+                {'error': 'La fecha inicial no puede ser mayor que la fecha final'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -89,19 +99,6 @@ class TopSkusByRegionWeeklyReportView(APIView):
         if report_type not in ['hectolitros', 'caja']:
             return Response(
                 {'error': 'report_type debe ser "hectolitros" o "caja" (opcional, default: hectolitros)'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # Validar rangos
-        if start_week < 1 or start_week > 53 or end_week < 1 or end_week > 53:
-            return Response(
-                {'error': 'start_week y end_week deben estar entre 1 y 53'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        if start_year > end_year:
-            return Response(
-                {'error': 'start_year no puede ser mayor que end_year'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -127,29 +124,29 @@ class TopSkusByRegionWeeklyReportView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Generar lista de semanas
-        weeks_list = self._generate_weeks_list(
-            start_year, end_year, start_week, end_week)
+        # Generar información de semanas desde las fechas
+        weeks_info = self._generate_weeks_from_dates(start_date_obj, end_date_obj)
 
-        if not weeks_list:
+        if not weeks_info or not weeks_info['weeks_list']:
             return Response(
                 {'error': 'No se pudieron generar semanas para el rango especificado'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        weeks_list = weeks_info['weeks_list']
+        year_week_pairs = weeks_info['year_week_pairs']
+
         # Si no se especifica retornable, obtener ambos tipos por separado
         if not retornable:
             # Obtener datos de retornables
             sales_data_retornable = self._get_sales_data(
-                start_year, end_year, start_week, end_week,
-                'retornable', regions_filter, report_type,
+                year_week_pairs, 'retornable', regions_filter, report_type,
                 group_by_region, group_by_city, group_by_poc
             )
             
             # Obtener datos de no retornables
             sales_data_no_retornable = self._get_sales_data(
-                start_year, end_year, start_week, end_week,
-                'no retornable', regions_filter, report_type,
+                year_week_pairs, 'no retornable', regions_filter, report_type,
                 group_by_region, group_by_city, group_by_poc
             )
             
@@ -166,8 +163,7 @@ class TopSkusByRegionWeeklyReportView(APIView):
         else:
             # Obtener datos según el tipo especificado
             sales_data = self._get_sales_data(
-                start_year, end_year, start_week, end_week,
-                retornable, regions_filter, report_type,
+                year_week_pairs, retornable, regions_filter, report_type,
                 group_by_region, group_by_city, group_by_poc
             )
             
@@ -184,10 +180,8 @@ class TopSkusByRegionWeeklyReportView(APIView):
                 time=datetime.now().time(),
                 app=str(APPS['SALES_CHECK']),
                 filters_applied={
-                    'start_year': start_year,
-                    'end_year': end_year,
-                    'start_week': start_week,
-                    'end_week': end_week,
+                    'start_date': start_date_str,
+                    'end_date': end_date_str,
                     'retornable': retornable if retornable else 'both',
                     'regions': regions_filter if regions_filter else 'all',
                     'report_type': report_type,
@@ -203,40 +197,47 @@ class TopSkusByRegionWeeklyReportView(APIView):
 
         return Response(response_data, status=status.HTTP_200_OK)
 
-    def _generate_weeks_list(self, start_year, end_year, start_week, end_week):
+    def _generate_weeks_from_dates(self, start_date, end_date):
         """
-        Generar lista de identificadores de semanas (ej: "w1", "w2", ...).
+        Generar lista de semanas y pares (año, semana) desde un rango de fechas.
+        Solo incluye las semanas que tienen días dentro del rango.
+
+        Returns:
+            dict con 'weeks_list' (ej: ["w1", "w2"]) y 'year_week_pairs' (ej: [(2026, 1), (2026, 2)])
         """
-        weeks_list = []
+        year_week_set = set()
+        current_date = start_date
+        
+        while current_date <= end_date:
+            iso_calendar = current_date.isocalendar()
+            year = iso_calendar[0]
+            week = iso_calendar[1]
+            year_week_set.add((year, week))
+            current_date += timedelta(days=1)
+        
+        if not year_week_set:
+            return None
+        
+        # Ordenar por año y semana
+        year_week_pairs = sorted(year_week_set, key=lambda x: (x[0], x[1]))
+        
+        # Generar lista de identificadores de semanas (w1, w2, etc.)
+        weeks_list = [f"w{week}" for year, week in year_week_pairs]
+        
+        return {
+            'weeks_list': weeks_list,
+            'year_week_pairs': year_week_pairs
+        }
 
-        if start_year == end_year:
-            for week_num in range(start_week, end_week + 1):
-                weeks_list.append(f"w{week_num}")
-        else:
-            # Primer año: desde start_week hasta 53
-            for week_num in range(start_week, 54):
-                weeks_list.append(f"w{week_num}")
-
-            # Años intermedios: todas las semanas
-            for year in range(start_year + 1, end_year):
-                for week_num in range(1, 54):
-                    weeks_list.append(f"w{week_num}")
-
-            # Último año: desde 1 hasta end_week
-            for week_num in range(1, end_week + 1):
-                weeks_list.append(f"w{week_num}")
-
-        return weeks_list
-
-    def _get_sales_data(self, start_year, end_year, start_week, end_week, retornable, regions_filter, report_type='hectolitros', group_by_region=True, group_by_city=False, group_by_poc=False):
+    def _get_sales_data(self, year_week_pairs, retornable, regions_filter, report_type='hectolitros', group_by_region=True, group_by_city=False, group_by_poc=False):
         """
         Obtener datos de ventas agrupados con jerarquía flexible.
 
+        Args:
+            year_week_pairs: Lista de tuplas (año, semana) a consultar
+
         Returns:
-            dict: Estructura jerárquica según los parámetros de agrupación:
-            - Solo región: {region: {(product_name, sku): {(year, week): value}}}
-            - Región + ciudad: {region: {city: {(product_name, sku): {(year, week): value}}}}
-            - Región + ciudad + POC: {region: {city: {poc: {(product_name, sku): {(year, week): value}}}}}
+            dict: Estructura jerárquica según los parámetros de agrupación
         """
         # Construir filtro base
         filters = Q(
@@ -263,25 +264,11 @@ class TopSkusByRegionWeeklyReportView(APIView):
         if regions_filter:
             filters &= Q(poc_region__in=regions_filter)
 
-        # Filtrar por rango de semanas
-        if start_year == end_year:
-            filters &= Q(year=start_year, week__gte=start_week,
-                         week__lte=end_week)
-        else:
-            # Construir filtro complejo para múltiples años
-            year_filters = Q()
-
-            # Primer año
-            year_filters |= Q(year=start_year, week__gte=start_week)
-
-            # Años intermedios
-            if end_year - start_year > 1:
-                year_filters |= Q(year__gt=start_year, year__lt=end_year)
-
-            # Último año
-            year_filters |= Q(year=end_year, week__lte=end_week)
-
-            filters &= year_filters
+        # Filtrar por pares (año, semana) específicos
+        year_week_filter = Q()
+        for year, week in year_week_pairs:
+            year_week_filter |= Q(year=year, week=week)
+        filters &= year_week_filter
 
         # Determinar los campos para agrupar según la jerarquía
         grouping_fields = []
@@ -506,6 +493,7 @@ class TopSkusByRegionWeeklyReportView(APIView):
 class TopSkusByRegionWeeklyReportDownloadView(APIView):
     """
     Vista para descargar el TOP 5 de SKUs por región y semana en Excel.
+    Filtra por rango de fechas y agrupa por semanas.
     """
     permission_classes = [IsAuthenticated]
 
@@ -514,29 +502,43 @@ class TopSkusByRegionWeeklyReportDownloadView(APIView):
         Descargar TOP 5 SKUs por región y semana en Excel con filtros jerárquicos.
 
         Query params:
-        - start_year: Año inicial (requerido)
-        - end_year: Año final (requerido)
-        - start_week: Semana inicial (requerido, 1-53)
-        - end_week: Semana final (requerido, 1-53)
+        - start_date: Fecha inicial en formato YYYY-MM-DD (requerido)
+        - end_date: Fecha final en formato YYYY-MM-DD (requerido)
         - retornable: "retornable" o "no retornable" (opcional, default: todos)
         - regions: Lista de regiones separadas por coma (opcional, default: todas)
         - report_type: "hectolitros" o "caja" (opcional, default: hectolitros)
-        - group_by_region: "true" o "false" (opcional, default: true)
-        - group_by_city: "true" o "false" (opcional, default: false)
-        - group_by_poc: "true" o "false" (opcional, default: false)
+
+        Ejemplo: start_date=2026-01-01&end_date=2026-01-31
+        Devuelve semanas 1 a 5, pero la semana 5 solo incluye datos hasta el 31.
 
         Returns:
         Archivo Excel con el reporte estructurado por regiones y productos
         """
-        # Validar parámetros (mismo código que la vista anterior)
+        # Validar parámetros requeridos
+        start_date_str = request.query_params.get('start_date')
+        end_date_str = request.query_params.get('end_date')
+        
+        if not start_date_str or not end_date_str:
+            return Response(
+                {'error': 'Se requieren parámetros: start_date y end_date en formato YYYY-MM-DD'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
         try:
-            start_year = int(request.query_params.get('start_year'))
-            end_year = int(request.query_params.get('end_year'))
-            start_week = int(request.query_params.get('start_week'))
-            end_week = int(request.query_params.get('end_week'))
+            start_date_obj = parse_date(start_date_str)
+            end_date_obj = parse_date(end_date_str)
+            
+            if not start_date_obj or not end_date_obj:
+                raise ValueError("Formato de fecha inválido")
         except (TypeError, ValueError):
             return Response(
-                {'error': 'start_year, end_year, start_week y end_week son requeridos y deben ser enteros'},
+                {'error': 'Formato de fecha inválido. Use YYYY-MM-DD'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if start_date_obj > end_date_obj:
+            return Response(
+                {'error': 'La fecha inicial no puede ser mayor que la fecha final'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -559,44 +561,32 @@ class TopSkusByRegionWeeklyReportDownloadView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        if start_week < 1 or start_week > 53 or end_week < 1 or end_week > 53:
-            return Response(
-                {'error': 'start_week y end_week deben estar entre 1 y 53'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        if start_year > end_year:
-            return Response(
-                {'error': 'start_year no puede ser mayor que end_year'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
         regions_param = request.query_params.get('regions', '').strip()
         regions_filter = [r.strip() for r in regions_param.split(
             ',') if r.strip()] if regions_param else None
 
-        # Generar lista de semanas
-        weeks_list = self._generate_weeks_list(
-            start_year, end_year, start_week, end_week)
+        # Generar información de semanas desde las fechas
+        weeks_info = self._generate_weeks_from_dates(start_date_obj, end_date_obj)
 
-        if not weeks_list:
+        if not weeks_info or not weeks_info['weeks_list']:
             return Response(
                 {'error': 'No se pudieron generar semanas para el rango especificado'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        weeks_list = weeks_info['weeks_list']
+        year_week_pairs = weeks_info['year_week_pairs']
+
         # Si no se especifica retornable, obtener ambos tipos por separado
         if not retornable:
             # Obtener datos de retornables
             sales_data_retornable = self._get_sales_data(
-                start_year, end_year, start_week, end_week,
-                'retornable', regions_filter, report_type
+                year_week_pairs, 'retornable', regions_filter, report_type
             )
             
             # Obtener datos de no retornables
             sales_data_no_retornable = self._get_sales_data(
-                start_year, end_year, start_week, end_week,
-                'no retornable', regions_filter, report_type
+                year_week_pairs, 'no retornable', regions_filter, report_type
             )
             
             # Construir respuesta con ambos tipos
@@ -613,8 +603,7 @@ class TopSkusByRegionWeeklyReportDownloadView(APIView):
         else:
             # Obtener datos según el tipo especificado
             sales_data = self._get_sales_data(
-                start_year, end_year, start_week, end_week,
-                retornable, regions_filter, report_type
+                year_week_pairs, retornable, regions_filter, report_type
             )
             
             # Construir respuesta estructurada
@@ -635,10 +624,8 @@ class TopSkusByRegionWeeklyReportDownloadView(APIView):
                 time=datetime.now().time(),
                 app=str(APPS['SALES_CHECK']),
                 filters_applied={
-                    'start_year': start_year,
-                    'end_year': end_year,
-                    'start_week': start_week,
-                    'end_week': end_week,
+                    'start_date': start_date_str,
+                    'end_date': end_date_str,
                     'retornable': retornable if retornable else 'both',
                     'regions': regions_filter if regions_filter else 'all',
                     'report_type': report_type
@@ -683,7 +670,7 @@ class TopSkusByRegionWeeklyReportDownloadView(APIView):
         # Generar nombre de archivo
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         type_label = 'hectolitros' if report_type == 'hectolitros' else 'cajas'
-        filename = f'top5_skus_{type_label}_{retornable_label}_{start_year}W{start_week}_{end_year}W{end_week}_{timestamp}.xlsx'
+        filename = f'top5_skus_{type_label}_{retornable_label}_{start_date_str}_{end_date_str}_{timestamp}.xlsx'
 
         # Crear respuesta HTTP
         response = HttpResponse(
@@ -694,28 +681,33 @@ class TopSkusByRegionWeeklyReportDownloadView(APIView):
 
         return response
 
-    def _generate_weeks_list(self, start_year, end_year, start_week, end_week):
-        """Generar lista de identificadores de semanas."""
-        weeks_list = []
+    def _generate_weeks_from_dates(self, start_date, end_date):
+        """
+        Generar lista de semanas y pares (año, semana) desde un rango de fechas.
+        """
+        year_week_set = set()
+        current_date = start_date
+        
+        while current_date <= end_date:
+            iso_calendar = current_date.isocalendar()
+            year = iso_calendar[0]
+            week = iso_calendar[1]
+            year_week_set.add((year, week))
+            current_date += timedelta(days=1)
+        
+        if not year_week_set:
+            return None
+        
+        year_week_pairs = sorted(year_week_set, key=lambda x: (x[0], x[1]))
+        weeks_list = [f"w{week}" for year, week in year_week_pairs]
+        
+        return {
+            'weeks_list': weeks_list,
+            'year_week_pairs': year_week_pairs
+        }
 
-        if start_year == end_year:
-            for week_num in range(start_week, end_week + 1):
-                weeks_list.append(f"w{week_num}")
-        else:
-            for week_num in range(start_week, 54):
-                weeks_list.append(f"w{week_num}")
-
-            for year in range(start_year + 1, end_year):
-                for week_num in range(1, 54):
-                    weeks_list.append(f"w{week_num}")
-
-            for week_num in range(1, end_week + 1):
-                weeks_list.append(f"w{week_num}")
-
-        return weeks_list
-
-    def _get_sales_data(self, start_year, end_year, start_week, end_week, retornable, regions_filter, report_type='hectolitros'):
-        """Obtener datos de ventas (mismo método que la vista anterior)."""
+    def _get_sales_data(self, year_week_pairs, retornable, regions_filter, report_type='hectolitros'):
+        """Obtener datos de ventas filtrados por pares (año, semana)."""
         filters = Q(
             deleted_at__isnull=True,
             year__isnull=False,
@@ -738,16 +730,11 @@ class TopSkusByRegionWeeklyReportDownloadView(APIView):
         if regions_filter:
             filters &= Q(poc_region__in=regions_filter)
 
-        if start_year == end_year:
-            filters &= Q(year=start_year, week__gte=start_week,
-                         week__lte=end_week)
-        else:
-            year_filters = Q()
-            year_filters |= Q(year=start_year, week__gte=start_week)
-            if end_year - start_year > 1:
-                year_filters |= Q(year__gt=start_year, year__lt=end_year)
-            year_filters |= Q(year=end_year, week__lte=end_week)
-            filters &= year_filters
+        # Filtrar por pares (año, semana) específicos
+        year_week_filter = Q()
+        for year, week in year_week_pairs:
+            year_week_filter |= Q(year=year, week=week)
+        filters &= year_week_filter
 
         # Obtener datos agrupados con anotación según tipo de reporte
         if report_type == 'hectolitros':
