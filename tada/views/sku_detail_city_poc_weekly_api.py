@@ -6,6 +6,7 @@ from django.http import HttpResponse
 from django.utils.dateparse import parse_date
 from datetime import datetime, timedelta
 from django.db.models import Sum, Q, F, DecimalField, ExpressionWrapper
+from django.db.models.functions import Upper
 from io import BytesIO
 from collections import defaultdict
 from decimal import Decimal
@@ -223,6 +224,7 @@ class SKUDetailByCityPOCWeeklyReportView(APIView):
         )
         
         # Agregar filtro para múltiples SKUs (case-insensitive)
+        # Usar OR con iexact para cada SKU individualmente
         sku_filter = Q()
         for sku_code in sku_codes:
             sku_filter |= Q(sku_vtex__iexact=sku_code)
@@ -547,16 +549,21 @@ class SKUDetailByCityPOCWeeklyReportDownloadView(APIView):
             'year_week_pairs': year_week_pairs
         }
 
-    def _get_sales_data(self, sku_code, year_week_pairs, report_type='hectolitros'):
-        """Obtener datos de ventas de un SKU específico."""
+    def _get_sales_data(self, sku_codes, year_week_pairs, report_type='hectolitros'):
+        """Obtener datos de ventas de uno o más SKUs."""
         filters = Q(
             deleted_at__isnull=True,
             year__isnull=False,
             week__isnull=False,
-            sku_vtex__iexact=sku_code,  # Case-insensitive exact match
             poc_city__isnull=False,
             poc_id__isnull=False
         )
+        
+        # Agregar filtro para SKUs (case-insensitive)
+        sku_filter = Q()
+        for sku_code in sku_codes:
+            sku_filter |= Q(sku_vtex__iexact=sku_code)
+        filters &= sku_filter
 
         if report_type == 'hectolitros':
             filters &= Q(hectolitros__isnull=False)
@@ -569,7 +576,8 @@ class SKUDetailByCityPOCWeeklyReportDownloadView(APIView):
             year_week_filter |= Q(year=year, week=week)
         filters &= year_week_filter
 
-        grouping_fields = ['poc_city', 'poc_id', 'poc_name',
+        # Incluir sku_vtex en los campos de agrupación
+        grouping_fields = ['sku_vtex', 'poc_city', 'poc_id', 'poc_name',
                            'name_homologated', 'name', 'year', 'week']
 
         if report_type == 'hectolitros':
@@ -577,7 +585,7 @@ class SKUDetailByCityPOCWeeklyReportDownloadView(APIView):
                 *grouping_fields
             ).annotate(
                 total_value=Sum('hectolitros')
-            ).order_by('poc_city', 'poc_id', 'year', 'week')
+            ).order_by('sku_vtex', 'poc_city', 'poc_id', 'year', 'week')
         else:
             sales_queryset = SalesRecord.objects.filter(filters).values(
                 *grouping_fields
@@ -589,16 +597,22 @@ class SKUDetailByCityPOCWeeklyReportDownloadView(APIView):
                         output_field=DecimalField()
                     )
                 )
-            ).order_by('poc_city', 'poc_id', 'year', 'week')
+            ).order_by('sku_vtex', 'poc_city', 'poc_id', 'year', 'week')
 
+        # Estructura para múltiples SKUs
         data_structure = {
-            'product_name': None,
-            'cities': defaultdict(lambda: defaultdict(lambda: defaultdict(Decimal)))
+            'skus': defaultdict(lambda: {
+                'product_name': None,
+                'cities': defaultdict(lambda: defaultdict(lambda: defaultdict(Decimal)))
+            })
         }
 
         for item in sales_queryset:
-            if not data_structure['product_name']:
-                data_structure['product_name'] = item['name_homologated'] or item['name'] or 'Sin nombre'
+            sku_code = item['sku_vtex']
+            
+            # Establecer nombre del producto si no existe
+            if not data_structure['skus'][sku_code]['product_name']:
+                data_structure['skus'][sku_code]['product_name'] = item['name_homologated'] or item['name'] or 'Sin nombre'
 
             city = item['poc_city'] or 'Sin ciudad'
             poc_id = item['poc_id'] or 'Sin ID'
@@ -606,67 +620,70 @@ class SKUDetailByCityPOCWeeklyReportDownloadView(APIView):
             poc_key = f"{poc_id} - {poc_name}"
             year = item['year']
             week = item['week']
-            value = Decimal(str(item['total_value'])
-                            ) if item['total_value'] else Decimal('0')
+            value = Decimal(str(item['total_value'])) if item['total_value'] else Decimal('0')
 
-            data_structure['cities'][city][poc_key][(year, week)] = value
+            data_structure['skus'][sku_code]['cities'][city][poc_key][(year, week)] = value
 
         return data_structure
 
-    def _build_response(self, sales_data, weeks_list, sku_code):
-        """Construir respuesta JSON estructurada."""
-        product_name = sales_data.get('product_name', 'Producto no encontrado')
-        cities_data = sales_data.get('cities', {})
+    def _build_response(self, sales_data, weeks_list):
+        """Construir respuesta JSON estructurada para múltiples SKUs."""
+        response = {'skus': {}}
+        skus_data = sales_data.get('skus', {})
 
-        response = {
-            'sku_code': sku_code,
-            'product_name': product_name,
-            'cities': {},
-            'total': 0
-        }
+        for sku_code, sku_data in skus_data.items():
+            product_name = sku_data.get('product_name', 'Producto no encontrado')
+            cities_data = sku_data.get('cities', {})
 
-        for week_id in weeks_list:
-            response[week_id] = 0
-
-        for city, pocs_data in cities_data.items():
-            city_response = {
-                'total': 0,
-                'pocs': {}
+            sku_response = {
+                'product_name': product_name,
+                'cities': {},
+                'total': 0
             }
 
             for week_id in weeks_list:
-                city_response[week_id] = 0
+                sku_response[week_id] = 0
 
-            for poc_key, weeks_data in pocs_data.items():
-                poc_response = {'total': 0}
+            for city, pocs_data in cities_data.items():
+                city_response = {
+                    'total': 0,
+                    'pocs': {}
+                }
 
                 for week_id in weeks_list:
-                    week_num = int(week_id[1:])
-                    week_value = Decimal('0')
-                    for (year, week), value in weeks_data.items():
-                        if week == week_num:
-                            week_value += value
+                    city_response[week_id] = 0
 
-                    poc_response[week_id] = round(float(week_value), 2)
-                    poc_response['total'] += week_value
-                    city_response[week_id] += week_value
-                    city_response['total'] += week_value
-                    response[week_id] += week_value
-                    response['total'] += week_value
+                for poc_key, weeks_data in pocs_data.items():
+                    poc_response = {'total': 0}
 
-                poc_response['total'] = round(float(poc_response['total']), 2)
-                city_response['pocs'][poc_key] = poc_response
+                    for week_id in weeks_list:
+                        week_num = int(week_id[1:])
+                        week_value = Decimal('0')
+                        for (year, week), value in weeks_data.items():
+                            if week == week_num:
+                                week_value += value
 
-            city_response['total'] = round(float(city_response['total']), 2)
+                        poc_response[week_id] = round(float(week_value), 2)
+                        poc_response['total'] += week_value
+                        city_response[week_id] += week_value
+                        city_response['total'] += week_value
+                        sku_response[week_id] += week_value
+                        sku_response['total'] += week_value
+
+                    poc_response['total'] = round(float(poc_response['total']), 2)
+                    city_response['pocs'][poc_key] = poc_response
+
+                city_response['total'] = round(float(city_response['total']), 2)
+                for week_id in weeks_list:
+                    city_response[week_id] = round(float(city_response[week_id]), 2)
+
+                sku_response['cities'][city] = city_response
+
+            sku_response['total'] = round(float(sku_response['total']), 2)
             for week_id in weeks_list:
-                city_response[week_id] = round(
-                    float(city_response[week_id]), 2)
-
-            response['cities'][city] = city_response
-
-        response['total'] = round(float(response['total']), 2)
-        for week_id in weeks_list:
-            response[week_id] = round(float(response[week_id]), 2)
+                sku_response[week_id] = round(float(sku_response[week_id]), 2)
+            
+            response['skus'][sku_code] = sku_response
 
         return response
 
