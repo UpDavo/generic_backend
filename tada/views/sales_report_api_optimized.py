@@ -29,6 +29,8 @@ import time
 import gc
 import traceback
 import hashlib
+import re
+import unicodedata
 
 # openpyxl para lectura en streaming
 from openpyxl import load_workbook
@@ -39,6 +41,48 @@ from tada.models import (
     SalesFileStorage, SalesFileRowHash
 )
 from tada.utils.constants import APPS
+
+
+def sanitize_filename(filename, date_start=None, date_end=None):
+    """
+    Sanitiza y normaliza el nombre del archivo para S3.
+    
+    Si se proporcionan fechas, genera nombre basado en rango:
+    - ventas_2026-02-01_2026-02-04.xlsx
+    
+    Si no, usa el nombre original sanitizado con timestamp.
+    """
+    # Obtener extensión
+    if '.' in filename:
+        _, ext = filename.rsplit('.', 1)
+        ext = f'.{ext}'
+    else:
+        ext = '.xlsx'
+    
+    # Si tenemos rango de fechas, usar nombre normalizado
+    if date_start and date_end:
+        return f"ventas_{date_start}_{date_end}{ext}"
+    
+    # Fallback: nombre original sanitizado
+    if '.' in filename:
+        name, _ = filename.rsplit('.', 1)
+    else:
+        name = filename
+    
+    # Normalizar unicode (quitar acentos)
+    name = unicodedata.normalize('NFKD', name)
+    name = name.encode('ASCII', 'ignore').decode('ASCII')
+    
+    # Reemplazar espacios con guiones bajos
+    name = name.replace(' ', '_')
+    
+    # Remover caracteres especiales
+    name = re.sub(r'[^a-zA-Z0-9_\-]', '', name)
+    
+    # Agregar timestamp para unicidad
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    
+    return f"{name}_{timestamp}{ext}"
 
 
 class OptimizedSalesReportProcessorView(APIView):
@@ -58,6 +102,38 @@ class OptimizedSalesReportProcessorView(APIView):
     PROGRESS_LOG_INTERVAL = 500  # Cada cuántas filas loguear progreso
     MAX_ROWS_LIMIT = 300000  # Límite máximo de filas
     ROW_HASH_BATCH_SIZE = 5000  # Batch para guardar hashes de filas
+    
+    # Palabras clave que indican filas de resumen/filtros a excluir (Google Sheets)
+    EXCLUDE_KEYWORDS = {'total', 'applied filters', 'filtros aplicados', 'subtotal', 'grand total'}
+
+    def _is_excluded_row(self, first_cell_value):
+        """
+        Verificar si una fila debe ser excluida (resumen, filtros, etc.)
+        
+        Args:
+            first_cell_value: Valor de la primera celda de la fila
+            
+        Returns:
+            bool: True si la fila debe excluirse
+        """
+        if first_cell_value is None:
+            return True
+            
+        first_cell_str = str(first_cell_value).lower().strip()
+        
+        # Verificar keywords de exclusión
+        if any(keyword in first_cell_str for keyword in self.EXCLUDE_KEYWORDS):
+            return True
+        
+        # Verificar si es un año válido (columna A debería tener el año)
+        try:
+            year_val = int(first_cell_value) if not isinstance(first_cell_value, int) else first_cell_value
+            if not (2020 <= year_val <= 2030):
+                return True
+        except (ValueError, TypeError):
+            return True
+            
+        return False
 
     def post(self, request):
         """
@@ -146,15 +222,38 @@ class OptimizedSalesReportProcessorView(APIView):
                 print(f"   ✓ {len(product_compra_lookup)} productos compra cargados")
 
             # === FASE 5: Contar filas del archivo ===
-            wb_count = load_workbook(BytesIO(file_content), read_only=True, data_only=True)
+            # Usar read_only=False para archivos de Google Sheets 
+            # (no definen dimensiones correctamente con read_only=True)
+            wb_count = load_workbook(BytesIO(file_content), read_only=False, data_only=True)
             ws_count = wb_count.active
-            total_rows = ws_count.max_row - 1  # Excluir header
+            
+            # Contar filas válidas (excluyendo resúmenes y filtros de Google Sheets)
+            total_rows = 0
+            for row in ws_count.iter_rows(min_row=2, values_only=True):
+                first_cell = row[0] if row else None
+                
+                if self._is_excluded_row(first_cell):
+                    if first_cell is not None:
+                        # Es una fila de resumen/filtro, no vacía
+                        if settings.DEBUG:
+                            print(f"   ⚠️ Fila excluida (resumen/filtro): '{str(first_cell)[:50]}...'")
+                        break
+                    continue
+                
+                total_rows += 1
+            
             wb_count.close()
             del wb_count
             gc.collect()
+            
+            if total_rows <= 0:
+                return Response(
+                    {'error': 'El archivo Excel está vacío o no tiene datos válidos'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
             if settings.DEBUG:
-                print(f"📊 Total de filas en archivo: {total_rows}")
+                print(f"📊 Total de filas de datos válidas: {total_rows}")
 
             if total_rows > self.MAX_ROWS_LIMIT:
                 return Response(
@@ -173,9 +272,21 @@ class OptimizedSalesReportProcessorView(APIView):
                 user=request.user
             )
 
-            # === FASE 7: Crear registro del archivo ===
+            # === FASE 7: Pre-escanear fechas para nombre normalizado ===
+            dates_in_file = self._prescan_dates(file_content)
+            date_start = min(dates_in_file) if dates_in_file else None
+            date_end = max(dates_in_file) if dates_in_file else None
+            
+            # Generar nombre normalizado basado en rango de fechas
+            safe_filename = sanitize_filename(excel_file.name, date_start, date_end)
+            
+            if settings.DEBUG:
+                print(f"📅 Rango de fechas: {date_start} a {date_end}")
+                print(f"📁 Nombre normalizado: {safe_filename}")
+            
+            # === FASE 8: Crear registro del archivo ===
             sales_file = SalesFileStorage.objects.create(
-                filename=excel_file.name,
+                filename=excel_file.name,  # Guardar nombre original
                 file_size=file_size,
                 file_hash=file_hash,
                 total_rows=total_rows,
@@ -184,14 +295,22 @@ class OptimizedSalesReportProcessorView(APIView):
                 previous_file=previous_file
             )
             
-            # Guardar el archivo físico
-            sales_file.file.save(
-                excel_file.name,
-                ContentFile(file_content),
-                save=True
-            )
+            # Guardar el archivo físico con nombre normalizado
+            try:
+                sales_file.file.save(
+                    safe_filename,
+                    ContentFile(file_content),
+                    save=True
+                )
+                if settings.DEBUG:
+                    print(f"📁 Archivo guardado en S3: {safe_filename}")
+            except Exception as e:
+                # Si falla S3, continuar sin guardar el archivo
+                if settings.DEBUG:
+                    print(f"⚠️ No se pudo guardar en S3: {str(e)}")
+                    print("   Continuando sin almacenar archivo...")
 
-            # === FASE 8: Cargar hashes del archivo anterior (si existe) ===
+            # === FASE 9: Cargar hashes del archivo anterior (si existe) ===
             previous_row_hashes = {}
             if previous_file:
                 if settings.DEBUG:
@@ -205,7 +324,7 @@ class OptimizedSalesReportProcessorView(APIView):
                 if settings.DEBUG:
                     print(f"   ✓ {len(previous_row_hashes)} hashes cargados")
 
-            # === FASE 9: Procesar archivo con comparación ===
+            # === FASE 10: Procesar archivo con comparación ===
             with transaction.atomic():
                 result = self._process_excel_with_comparison(
                     file_content=file_content,
@@ -220,7 +339,7 @@ class OptimizedSalesReportProcessorView(APIView):
                     previous_file=previous_file
                 )
 
-            # === FASE 10: Actualizar estadísticas del archivo ===
+            # === FASE 11: Actualizar estadísticas del archivo ===
             end_time = time.time()
             processing_duration = Decimal(str(round(end_time - start_time, 3)))
 
@@ -236,6 +355,26 @@ class OptimizedSalesReportProcessorView(APIView):
             SalesReportLog.objects.filter(id=sales_log.id).update(
                 processing_time_seconds=processing_duration
             )
+
+            # === FASE 12: Eliminar archivo anterior de S3 (limpieza) ===
+            if previous_file:
+                try:
+                    # Eliminar archivo físico de S3
+                    if previous_file.file:
+                        previous_file.delete_file()
+                    
+                    # Eliminar hashes del archivo anterior
+                    SalesFileRowHash.objects.filter(sales_file=previous_file).delete()
+                    
+                    # Soft delete del registro
+                    previous_file.deleted_at = now()
+                    previous_file.save(update_fields=['deleted_at'])
+                    
+                    if settings.DEBUG:
+                        print(f"🗑️ Archivo anterior eliminado: {previous_file.filename}")
+                except Exception as e:
+                    if settings.DEBUG:
+                        print(f"⚠️ Error al eliminar archivo anterior: {str(e)}")
 
             if settings.DEBUG:
                 print(f"\n✅ Procesamiento completado en {processing_duration}s")
@@ -669,13 +808,15 @@ class OptimizedSalesReportProcessorView(APIView):
         """
         Pre-escanear el archivo para obtener las fechas únicas.
         Esto permite cargar solo los registros necesarios de la BD.
+        Excluye filas de resumen/filtros de Google Sheets.
         """
         dates = set()
         
-        wb = load_workbook(BytesIO(file_content), read_only=True, data_only=True)
+        wb = load_workbook(BytesIO(file_content), read_only=False, data_only=True)
         ws = wb.active
         
         date_col_idx = None
+        year_col_idx = 0  # Columna A es el año
         
         for row_idx, row in enumerate(ws.iter_rows(values_only=True)):
             if row_idx == 0:
@@ -687,6 +828,13 @@ class OptimizedSalesReportProcessorView(APIView):
             
             if date_col_idx is None:
                 break
+            
+            # Verificar si es fila de resumen/filtro
+            first_cell = row[year_col_idx] if row else None
+            if self._is_excluded_row(first_cell):
+                if first_cell is not None:
+                    break  # Fila de resumen, terminar
+                continue  # Fila vacía, seguir
                 
             try:
                 date_val = row[date_col_idx]
@@ -700,7 +848,11 @@ class OptimizedSalesReportProcessorView(APIView):
                             try:
                                 dates.add(datetime.strptime(str(date_val), '%d/%m/%Y').date())
                             except:
-                                pass
+                                # Intentar formato M/D/YY (Google Sheets)
+                                try:
+                                    dates.add(datetime.strptime(str(date_val), '%m/%d/%y').date())
+                                except:
+                                    pass
             except:
                 pass
         
@@ -790,6 +942,7 @@ class OptimizedSalesReportProcessorView(APIView):
             print(f"   ✓ {len(existing_records)} registros existentes en BD")
 
         # Procesar fila por fila
+        year_col_idx = 0  # Columna A es el año
         for row_idx, row in enumerate(ws.iter_rows(values_only=True)):
             if row_idx == 0:
                 headers = list(row)
@@ -799,6 +952,15 @@ class OptimizedSalesReportProcessorView(APIView):
                     raise ValueError(f"Faltan columnas: {', '.join(missing)}")
                 col_indices = {col: headers.index(col) for col in required_columns}
                 continue
+
+            # Verificar si es fila de resumen/filtro (Google Sheets)
+            first_cell = row[year_col_idx] if row else None
+            if self._is_excluded_row(first_cell):
+                if first_cell is not None:
+                    if settings.DEBUG:
+                        print(f"   ⚠️ Terminando procesamiento - fila de resumen detectada")
+                    break  # Fila de resumen, terminar
+                continue  # Fila vacía, seguir
 
             try:
                 date_val = row[col_indices['Date Hierarchy - Date']]
@@ -857,25 +1019,43 @@ class OptimizedSalesReportProcessorView(APIView):
                 })
                 continue
 
-            # Procesar fecha
+            # Procesar fecha (soporta múltiples formatos)
             try:
                 if isinstance(date_val, datetime):
                     date_obj = date_val.date()
                 else:
-                    date_obj = datetime.strptime(str(date_val), '%Y-%m-%d').date()
-            except:
-                try:
-                    date_obj = datetime.strptime(str(date_val), '%d/%m/%Y').date()
-                except:
-                    unprocessed_rows.append({
-                        'Date Hierarchy - Date': date_val,
-                        'STORE_NAME': store_name,
-                        'product_spk': product_spk,
-                        '# Units': units,
-                        '# Orders': orders,
-                        'error_reason': f'Fecha inválida: {date_val}'
-                    })
-                    continue
+                    date_str = str(date_val).strip()
+                    date_obj = None
+                    
+                    # Intentar diferentes formatos
+                    date_formats = [
+                        '%Y-%m-%d',     # 2026-02-03
+                        '%d/%m/%Y',     # 03/02/2026
+                        '%m/%d/%y',     # 2/3/26 (Google Sheets US)
+                        '%d/%m/%y',     # 3/2/26 (Google Sheets ES)
+                        '%m/%d/%Y',     # 2/3/2026
+                    ]
+                    
+                    for fmt in date_formats:
+                        try:
+                            date_obj = datetime.strptime(date_str, fmt).date()
+                            break
+                        except ValueError:
+                            continue
+                    
+                    if date_obj is None:
+                        raise ValueError(f"No se pudo parsear: {date_str}")
+                        
+            except Exception as e:
+                unprocessed_rows.append({
+                    'Date Hierarchy - Date': date_val,
+                    'STORE_NAME': store_name,
+                    'product_spk': product_spk,
+                    '# Units': units,
+                    '# Orders': orders,
+                    'error_reason': f'Fecha inválida: {date_val}'
+                })
+                continue
 
             all_dates.add(date_obj)
             all_stores.add(str(store_name).upper())
