@@ -251,7 +251,12 @@ class TopSkusByRegionWeeklyReportView(APIView):
         if report_type == 'hectolitros':
             filters &= Q(hectolitros__isnull=False)
         else:  # caja
-            filters &= Q(orders__isnull=False, units_assigned__isnull=False, unidades_por_caja__isnull=False)
+            filters &= Q(
+                orders__isnull=False, 
+                units_assigned__isnull=False, 
+                unidades_por_caja__isnull=False,
+                unidades_por_caja__gt=0  # Evitar división por cero
+            )
 
         # Filtrar por retornable (opcional)
         if retornable:
@@ -719,7 +724,12 @@ class TopSkusByRegionWeeklyReportDownloadView(APIView):
         if report_type == 'hectolitros':
             filters &= Q(hectolitros__isnull=False)
         else:  # caja
-            filters &= Q(orders__isnull=False, units_assigned__isnull=False, unidades_por_caja__isnull=False)
+            filters &= Q(
+                orders__isnull=False, 
+                units_assigned__isnull=False, 
+                unidades_por_caja__isnull=False,
+                unidades_por_caja__gt=0  # Evitar división por cero
+            )
 
         if retornable:
             if retornable == 'retornable':

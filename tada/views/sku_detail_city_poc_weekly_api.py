@@ -234,8 +234,12 @@ class SKUDetailByCityPOCWeeklyReportView(APIView):
         if report_type == 'hectolitros':
             filters &= Q(hectolitros__isnull=False)
         else:  # caja
-            filters &= Q(orders__isnull=False, units_assigned__isnull=False,
-                         unidades_por_caja__isnull=False)
+            filters &= Q(
+                orders__isnull=False, 
+                units_assigned__isnull=False,
+                unidades_por_caja__isnull=False,
+                unidades_por_caja__gt=0  # Evitar división por cero
+            )
 
         # Filtrar por pares (año, semana) específicos
         year_week_filter = Q()
@@ -568,8 +572,12 @@ class SKUDetailByCityPOCWeeklyReportDownloadView(APIView):
         if report_type == 'hectolitros':
             filters &= Q(hectolitros__isnull=False)
         else:
-            filters &= Q(orders__isnull=False, units_assigned__isnull=False,
-                         unidades_por_caja__isnull=False)
+            filters &= Q(
+                orders__isnull=False, 
+                units_assigned__isnull=False,
+                unidades_por_caja__isnull=False,
+                unidades_por_caja__gt=0  # Evitar división por cero
+            )
 
         year_week_filter = Q()
         for year, week in year_week_pairs:

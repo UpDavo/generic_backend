@@ -19,3 +19,4 @@ from .salesRecordQueryLog import SalesRecordQueryLog
 from .salesUploadLog import SalesUploadLog
 from .negativosJustificacion import NegativosJustificacion
 from .manualYearlyData import ManualYearlyData
+from .salesFileStorage import SalesFileStorage, SalesFileRowHash

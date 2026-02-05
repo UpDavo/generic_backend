@@ -558,7 +558,8 @@ class HectolitresWeeklyReportView(APIView):
                 date__lte=end_date,
                 orders__isnull=False,
                 units_assigned__isnull=False,
-                unidades_por_caja__isnull=False
+                unidades_por_caja__isnull=False,
+                unidades_por_caja__gt=0  # Evitar división por cero
             ).values('date').annotate(
                 total_ht=Sum(
                     ExpressionWrapper(
@@ -870,7 +871,8 @@ class HectolitresWeeklyReportDownloadView(APIView):
                 date__lte=end_date,
                 orders__isnull=False,
                 units_assigned__isnull=False,
-                unidades_por_caja__isnull=False
+                unidades_por_caja__isnull=False,
+                unidades_por_caja__gt=0  # Evitar división por cero
             ).values('date').annotate(
                 total_ht=Sum(
                     ExpressionWrapper(
