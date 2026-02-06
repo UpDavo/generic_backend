@@ -130,7 +130,7 @@ class SalesReportService:
             results['image_url'] = image_url
 
             # Construir mensaje de texto
-            message_text = f"📊 *{title}*"
+            message_text = f"📊 {title}"
 
             # Obtener números de teléfono configurados para SALES_REPORT
             phone_numbers = EmailNotification.get_numbers_by_type_constant(

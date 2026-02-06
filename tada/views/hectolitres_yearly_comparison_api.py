@@ -9,7 +9,7 @@ from io import BytesIO
 from decimal import Decimal
 import pandas as pd
 
-from tada.models import SalesRecord, SalesRecordQueryLog, ManualYearlyData
+from tada.models import SalesRecord, SalesRecordQueryLog, YearlySalesData
 from tada.utils.constants import APPS
 
 
@@ -119,55 +119,54 @@ class HectolitresYearlyComparisonReportView(APIView):
 
         Returns:
             dict: {
-                "totals": {"2024": {"value": 1500.50, "is_manual": false, "manual_id": null}, ...},
-                "cities": {"Lima": {"2024": {"value": 800.25, "is_manual": false, "manual_id": null}, ...}, ...}
+                "totals": {"2024": 1500.50, ...},
+                "cities": {"Lima": {"2024": 800.25, ...}, ...}
             }
         """
         from django.db.models import F, ExpressionWrapper, DecimalField
+        from datetime import datetime, timedelta
         
         totals = {}
         cities_data = {}
 
         for year in range(start_year, end_year + 1):
-            # Primero, verificar si hay datos manuales para este período
-            manual_total = ManualYearlyData.objects.filter(
+            # Calcular fechas aproximadas para el rango de semanas
+            # Usamos ISO 8601 para las semanas
+            start_date = datetime.strptime(f'{year}-W{start_week:02d}-1', "%Y-W%W-%w").date()
+            # Para la fecha final, tomamos el último día de la semana final
+            end_date = datetime.strptime(f'{year}-W{end_week:02d}-0', "%Y-W%W-%w").date()
+            
+            # Primero, verificar si hay datos en YearlySalesData para este período
+            yearly_total_data = YearlySalesData.objects.filter(
                 deleted_at__isnull=True,
-                year=year,
-                start_week=start_week,
-                end_week=end_week,
+                date__gte=start_date,
+                date__lte=end_date,
                 report_type=report_type,
                 city__isnull=True  # Total general
-            ).first()
+            ).aggregate(total=Sum('total'))
             
-            manual_cities = ManualYearlyData.objects.filter(
+            yearly_cities_data = YearlySalesData.objects.filter(
                 deleted_at__isnull=True,
-                year=year,
-                start_week=start_week,
-                end_week=end_week,
+                date__gte=start_date,
+                date__lte=end_date,
                 report_type=report_type,
                 city__isnull=False  # Datos por ciudad
-            )
+            ).values('city').annotate(total=Sum('total'))
             
-            # Si hay datos manuales, usarlos; de lo contrario, calcular desde SalesRecord
-            if manual_total or manual_cities.exists():
-                # Usar datos manuales
-                total = manual_total.value if manual_total else Decimal('0')
-                total_data = {
-                    'value': round(float(total), 2),
-                    'is_manual': True,
-                    'manual_id': manual_total.id if manual_total else None
-                }
-                totals[str(year)] = total_data
+            # Si hay datos en YearlySalesData, usarlos
+            if yearly_total_data['total'] is not None or yearly_cities_data.exists():
+                # Usar datos de YearlySalesData
+                total = yearly_total_data['total'] or Decimal('0')
+                totals[str(year)] = round(float(total), 2)
                 
-                for manual_city in manual_cities:
-                    city_name = manual_city.city
+                for city_data in yearly_cities_data:
+                    city_name = city_data['city']
+                    city_total = city_data['total'] or Decimal('0')
+                    
                     if city_name not in cities_data:
                         cities_data[city_name] = {}
-                    cities_data[city_name][str(year)] = {
-                        'value': round(float(manual_city.value), 2),
-                        'is_manual': True,
-                        'manual_id': manual_city.id
-                    }
+                    
+                    cities_data[city_name][str(year)] = round(float(city_total), 2)
                     
             else:
                 # Calcular desde SalesRecord (lógica existente)
@@ -238,12 +237,9 @@ class HectolitresYearlyComparisonReportView(APIView):
                     ).order_by('poc_city')
 
                 # Guardar total del año (calculado)
-                totals[str(year)] = {
-                    'value': round(float(total), 2),
-                    'is_manual': False
-                }
+                totals[str(year)] = round(float(total), 2)
 
-                # Procesar resultados por ciudad (solo si no hay datos manuales)
+                # Procesar resultados por ciudad
                 for city_item in city_results:
                     city_name = city_item['poc_city']
                     city_total = city_item.get('total') or city_item.get('cajas') or Decimal('0')
@@ -251,10 +247,7 @@ class HectolitresYearlyComparisonReportView(APIView):
                     if city_name not in cities_data:
                         cities_data[city_name] = {}
                     
-                    cities_data[city_name][str(year)] = {
-                        'value': round(float(city_total), 2),
-                        'is_manual': False
-                    }
+                    cities_data[city_name][str(year)] = round(float(city_total), 2)
 
         return {
             'totals': totals,
@@ -319,21 +312,21 @@ class HectolitresYearlyComparisonReportDownloadView(APIView):
             start_year, end_year, start_week, end_week, report_type
         )
 
-        # Crear DataFrame para totales (extraer value del nuevo formato)
+        # Crear DataFrame para totales
         column_name = 'Hectolitros' if report_type == 'hectolitros' else 'Cajas'
         df_totals = pd.DataFrame([
-            {'Año': year, column_name: year_data['value'], 'Es Manual': year_data['is_manual']}
-            for year, year_data in data['totals'].items()
+            {'Año': year, column_name: value}
+            for year, value in data['totals'].items()
         ])
         
-        # Crear DataFrame para ciudades (extraer value del nuevo formato)
+        # Crear DataFrame para ciudades
         cities_rows = []
         for city, years_data in data['cities'].items():
             row = {'Ciudad': city}
             for year in range(start_year, end_year + 1):
                 year_str = str(year)
                 if year_str in years_data:
-                    row[year_str] = years_data[year_str]['value']
+                    row[year_str] = years_data[year_str]
                 else:
                     row[year_str] = 0.0
             cities_rows.append(row)
@@ -413,50 +406,49 @@ class HectolitresYearlyComparisonReportDownloadView(APIView):
         (Mismo método que la vista anterior)
         """
         from django.db.models import F, ExpressionWrapper, DecimalField
+        from datetime import datetime, timedelta
         
         totals = {}
         cities_data = {}
 
         for year in range(start_year, end_year + 1):
-            # Primero, verificar si hay datos manuales para este período
-            manual_total = ManualYearlyData.objects.filter(
+            # Calcular fechas aproximadas para el rango de semanas
+            # Usamos ISO 8601 para las semanas
+            start_date = datetime.strptime(f'{year}-W{start_week:02d}-1', "%Y-W%W-%w").date()
+            # Para la fecha final, tomamos el último día de la semana final
+            end_date = datetime.strptime(f'{year}-W{end_week:02d}-0', "%Y-W%W-%w").date()
+            
+            # Primero, verificar si hay datos en YearlySalesData para este período
+            yearly_total_data = YearlySalesData.objects.filter(
                 deleted_at__isnull=True,
-                year=year,
-                start_week=start_week,
-                end_week=end_week,
+                date__gte=start_date,
+                date__lte=end_date,
                 report_type=report_type,
                 city__isnull=True  # Total general
-            ).first()
+            ).aggregate(total=Sum('total'))
             
-            manual_cities = ManualYearlyData.objects.filter(
+            yearly_cities_data = YearlySalesData.objects.filter(
                 deleted_at__isnull=True,
-                year=year,
-                start_week=start_week,
-                end_week=end_week,
+                date__gte=start_date,
+                date__lte=end_date,
                 report_type=report_type,
                 city__isnull=False  # Datos por ciudad
-            )
+            ).values('city').annotate(total=Sum('total'))
             
-            # Si hay datos manuales, usarlos; de lo contrario, calcular desde SalesRecord
-            if manual_total or manual_cities.exists():
-                # Usar datos manuales
-                total = manual_total.value if manual_total else Decimal('0')
-                total_data = {
-                    'value': round(float(total), 2),
-                    'is_manual': True,
-                    'manual_id': manual_total.id if manual_total else None
-                }
-                totals[str(year)] = total_data
+            # Si hay datos en YearlySalesData, usarlos
+            if yearly_total_data['total'] is not None or yearly_cities_data.exists():
+                # Usar datos de YearlySalesData
+                total = yearly_total_data['total'] or Decimal('0')
+                totals[str(year)] = round(float(total), 2)
                 
-                for manual_city in manual_cities:
-                    city_name = manual_city.city
+                for city_data in yearly_cities_data:
+                    city_name = city_data['city']
+                    city_total = city_data['total'] or Decimal('0')
+                    
                     if city_name not in cities_data:
                         cities_data[city_name] = {}
-                    cities_data[city_name][str(year)] = {
-                        'value': round(float(manual_city.value), 2),
-                        'is_manual': True,
-                        'manual_id': manual_city.id
-                    }
+                    
+                    cities_data[city_name][str(year)] = round(float(city_total), 2)
                     
             else:
                 # Calcular desde SalesRecord (lógica existente)
@@ -527,12 +519,9 @@ class HectolitresYearlyComparisonReportDownloadView(APIView):
                     ).order_by('poc_city')
 
                 # Guardar total del año (calculado)
-                totals[str(year)] = {
-                    'value': round(float(total), 2),
-                    'is_manual': False
-                }
+                totals[str(year)] = round(float(total), 2)
 
-                # Procesar resultados por ciudad (solo si no hay datos manuales)
+                # Procesar resultados por ciudad
                 for city_item in city_results:
                     city_name = city_item['poc_city']
                     city_total = city_item.get('total') or city_item.get('cajas') or Decimal('0')
@@ -540,10 +529,7 @@ class HectolitresYearlyComparisonReportDownloadView(APIView):
                     if city_name not in cities_data:
                         cities_data[city_name] = {}
                     
-                    cities_data[city_name][str(year)] = {
-                        'value': round(float(city_total), 2),
-                        'is_manual': False
-                    }
+                    cities_data[city_name][str(year)] = round(float(city_total), 2)
 
         return {
             'totals': totals,
