@@ -192,6 +192,8 @@ urlpatterns = [
          name='ventas-productos-compra-list-create'),
     path('ventas-productos-compra/search/', VentasProductosCompraSearchView.as_view(),
          name='ventas-productos-compra-search'),
+    path('ventas-productos-compra/search-homologated/', VentasProductosCompraSearchHomologatedView.as_view(),
+         name='ventas-productos-compra-search-homologated'),
     path('ventas-productos-compra/categories/', VentasProductosCompraCategoriesView.as_view(),
          name='ventas-productos-compra-categories'),
     path('ventas-productos-compra/brands/', VentasProductosCompraBrandsView.as_view(),

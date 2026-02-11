@@ -12,8 +12,72 @@ from collections import defaultdict
 from decimal import Decimal
 import pandas as pd
 
-from tada.models import SalesRecord, SalesRecordQueryLog
+from tada.models import SalesRecord, SalesRecordQueryLog, VentasProductosCompra
 from tada.utils.constants import APPS
+
+
+def _group_skus_by_homologated(sku_codes):
+    """
+    Agrupar SKU codes por nombre homologado compartido desde VentasProductosCompra.
+    Returns:
+        tuple: (sku_to_group, groups_info)
+        - sku_to_group: dict mapping sku_code -> group_key
+        - groups_info: dict mapping group_key -> {sku_codes, product_name, homologated}
+    """
+    products = VentasProductosCompra.objects.filter(code__in=sku_codes)
+
+    code_to_product = {}
+    h_name_to_codes = {}
+
+    for product in products:
+        code_to_product[product.code] = product
+        names = product.homologated_names or []
+        for h_name in names:
+            h_key = h_name.strip().lower()
+            if h_key not in h_name_to_codes:
+                h_name_to_codes[h_key] = {
+                    'codes': set(),
+                    'display_name': h_name.strip().upper()
+                }
+            h_name_to_codes[h_key]['codes'].add(product.code)
+
+    sku_to_group = {}
+    groups_info = {}
+    used_codes = set()
+
+    # Priorizar grupos más grandes
+    for h_key, info in sorted(h_name_to_codes.items(), key=lambda x: -len(x[1]['codes'])):
+        relevant_codes = sorted(
+            [c for c in info['codes'] if c in sku_codes and c not in used_codes])
+        if relevant_codes:
+            group_key = info['display_name']
+            for code in relevant_codes:
+                sku_to_group[code] = group_key
+                used_codes.add(code)
+            if group_key not in groups_info:
+                groups_info[group_key] = {
+                    'sku_codes': relevant_codes,
+                    'product_name': info['display_name'],
+                    'homologated': True
+                }
+            else:
+                groups_info[group_key]['sku_codes'] = sorted(
+                    set(groups_info[group_key]['sku_codes'] + relevant_codes)
+                )
+
+    # SKUs sin nombre homologado o no encontrados en VentasProductosCompra
+    for code in sku_codes:
+        if code not in used_codes:
+            product = code_to_product.get(code)
+            name = product.name.upper() if product and product.name else code
+            sku_to_group[code] = code
+            groups_info[code] = {
+                'sku_codes': [code],
+                'product_name': name,
+                'homologated': False
+            }
+
+    return sku_to_group, groups_info
 
 
 class SKUDetailByCityPOCWeeklyReportView(APIView):
@@ -75,9 +139,10 @@ class SKUDetailByCityPOCWeeklyReportView(APIView):
                 {'error': 'Se requiere el parámetro sku_code'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         # Separar SKUs por comas y limpiar espacios
-        sku_codes = [sku.strip() for sku in sku_code_param.split(',') if sku.strip()]
+        sku_codes = [sku.strip()
+                     for sku in sku_code_param.split(',') if sku.strip()]
 
         # Validar parámetros de fecha (requeridos)
         start_date_str = request.query_params.get('start_date')
@@ -129,9 +194,12 @@ class SKUDetailByCityPOCWeeklyReportView(APIView):
         weeks_list = weeks_info['weeks_list']
         year_week_pairs = weeks_info['year_week_pairs']
 
+        # Agrupar SKUs por nombre homologado
+        sku_to_group, groups_info = _group_skus_by_homologated(sku_codes)
+
         # Obtener datos de ventas de los SKUs
         sales_data = self._get_sales_data(
-            sku_codes, year_week_pairs, report_type
+            sku_codes, year_week_pairs, report_type, sku_to_group
         )
 
         if not sales_data or not sales_data.get('skus'):
@@ -141,7 +209,8 @@ class SKUDetailByCityPOCWeeklyReportView(APIView):
             )
 
         # Construir respuesta estructurada
-        response_data = self._build_response(sales_data, weeks_list)
+        response_data = self._build_response(
+            sales_data, weeks_list, groups_info)
 
         # Crear log de la consulta
         try:
@@ -189,7 +258,7 @@ class SKUDetailByCityPOCWeeklyReportView(APIView):
             'year_week_pairs': year_week_pairs
         }
 
-    def _get_sales_data(self, sku_codes, year_week_pairs, report_type='hectolitros'):
+    def _get_sales_data(self, sku_codes, year_week_pairs, report_type='hectolitros', sku_to_group=None):
         """
         Obtener datos de ventas de uno o más SKUs agrupados por SKU, ciudad y POC.
 
@@ -222,7 +291,7 @@ class SKUDetailByCityPOCWeeklyReportView(APIView):
             poc_city__isnull=False,
             poc_id__isnull=False
         )
-        
+
         # Agregar filtro para múltiples SKUs (case-insensitive)
         # Usar OR con iexact para cada SKU individualmente
         sku_filter = Q()
@@ -235,7 +304,7 @@ class SKUDetailByCityPOCWeeklyReportView(APIView):
             filters &= Q(hectolitros__isnull=False)
         else:  # caja
             filters &= Q(
-                orders__isnull=False, 
+                orders__isnull=False,
                 units_assigned__isnull=False,
                 unidades_por_caja__isnull=False,
                 unidades_por_caja__gt=0  # Evitar división por cero
@@ -279,10 +348,11 @@ class SKUDetailByCityPOCWeeklyReportView(APIView):
 
         for item in sales_queryset:
             sku = item['sku_vtex']
-            
-            # Capturar nombre del producto (solo una vez por SKU)
-            if not data_structure['skus'][sku]['product_name']:
-                data_structure['skus'][sku]['product_name'] = item['name_homologated'] or item['name'] or 'Sin nombre'
+            group_key = sku_to_group.get(sku, sku) if sku_to_group else sku
+
+            # Capturar nombre del producto (solo una vez por grupo)
+            if not data_structure['skus'][group_key]['product_name']:
+                data_structure['skus'][group_key]['product_name'] = item['name_homologated'] or item['name'] or 'Sin nombre'
 
             city = item['poc_city'] or 'Sin ciudad'
             poc_id = item['poc_id'] or 'Sin ID'
@@ -290,34 +360,40 @@ class SKUDetailByCityPOCWeeklyReportView(APIView):
             poc_key = f"{poc_id} - {poc_name}"
             year = item['year']
             week = item['week']
-            value = Decimal(str(item['total_value'])) if item['total_value'] else Decimal('0')
+            value = Decimal(str(item['total_value'])
+                            ) if item['total_value'] else Decimal('0')
 
-            data_structure['skus'][sku]['cities'][city][poc_key][(year, week)] = value
+            data_structure['skus'][group_key]['cities'][city][poc_key][(
+                year, week)] += value
 
         return data_structure
 
-    def _build_response(self, sales_data, weeks_list):
+    def _build_response(self, sales_data, weeks_list, groups_info=None):
         """
-        Construir respuesta JSON estructurada por SKUs, ciudades y POCs.
+        Construir respuesta JSON estructurada por SKUs/grupos, ciudades y POCs.
         """
         skus_data = sales_data.get('skus', {})
-        
+
         response = {
             'skus': {}
         }
 
-        # Procesar cada SKU
-        for sku_code, sku_info in skus_data.items():
-            product_name = sku_info.get('product_name', 'Producto no encontrado')
+        # Procesar cada SKU/grupo
+        for group_key, sku_info in skus_data.items():
+            product_name = sku_info.get(
+                'product_name', 'Producto no encontrado')
             cities_data = sku_info.get('cities', {})
-            
+
+            group_data = groups_info.get(group_key, {}) if groups_info else {}
+
             sku_response = {
-                'sku_code': sku_code,
-                'product_name': product_name,
+                'sku_codes': group_data.get('sku_codes', [group_key]),
+                'product_name': group_data.get('product_name', product_name),
+                'homologated': group_data.get('homologated', False),
                 'cities': {},
                 'total': 0
             }
-            
+
             # Inicializar totales por semana a nivel de SKU
             for week_id in weeks_list:
                 sku_response[week_id] = 0
@@ -361,10 +437,12 @@ class SKUDetailByCityPOCWeeklyReportView(APIView):
                         sku_response['total'] += week_value
 
                     # Redondear total del POC
-                    poc_response['total'] = round(float(poc_response['total']), 2)
+                    poc_response['total'] = round(
+                        float(poc_response['total']), 2)
                     city_response['pocs'][poc_key] = poc_response
                 # Redondear totales de ciudad y convertir a float
-                city_response['total'] = round(float(city_response['total']), 2)
+                city_response['total'] = round(
+                    float(city_response['total']), 2)
                 for week_id in weeks_list:
                     city_response[week_id] = round(
                         float(city_response[week_id]), 2)
@@ -375,8 +453,8 @@ class SKUDetailByCityPOCWeeklyReportView(APIView):
             sku_response['total'] = round(float(sku_response['total']), 2)
             for week_id in weeks_list:
                 sku_response[week_id] = round(float(sku_response[week_id]), 2)
-            
-            response['skus'][sku_code] = sku_response
+
+            response['skus'][group_key] = sku_response
 
         return response
 
@@ -407,9 +485,10 @@ class SKUDetailByCityPOCWeeklyReportDownloadView(APIView):
                 {'error': 'Se requiere el parámetro sku_code'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         # Separar SKUs por comas y limpiar espacios
-        sku_codes = [sku.strip() for sku in sku_code_param.split(',') if sku.strip()]
+        sku_codes = [sku.strip()
+                     for sku in sku_code_param.split(',') if sku.strip()]
 
         # Validar parámetros de fecha (requeridos)
         start_date_str = request.query_params.get('start_date')
@@ -461,9 +540,12 @@ class SKUDetailByCityPOCWeeklyReportDownloadView(APIView):
         weeks_list = weeks_info['weeks_list']
         year_week_pairs = weeks_info['year_week_pairs']
 
+        # Agrupar SKUs por nombre homologado
+        sku_to_group, groups_info = _group_skus_by_homologated(sku_codes)
+
         # Obtener datos de ventas de los SKUs
         sales_data = self._get_sales_data(
-            sku_codes, year_week_pairs, report_type
+            sku_codes, year_week_pairs, report_type, sku_to_group
         )
 
         if not sales_data or not sales_data.get('skus'):
@@ -473,7 +555,8 @@ class SKUDetailByCityPOCWeeklyReportDownloadView(APIView):
             )
 
         # Construir respuesta estructurada
-        response_data = self._build_response(sales_data, weeks_list)
+        response_data = self._build_response(
+            sales_data, weeks_list, groups_info)
 
         # Crear DataFrame para Excel
         df = self._build_excel_dataframe(response_data, weeks_list)
@@ -518,7 +601,8 @@ class SKUDetailByCityPOCWeeklyReportDownloadView(APIView):
         # Generar nombre de archivo
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         type_label = 'hectolitros' if report_type == 'hectolitros' else 'cajas'
-        sku_label = sku_codes[0] if len(sku_codes) == 1 else f'{len(sku_codes)}_skus'
+        sku_label = sku_codes[0] if len(
+            sku_codes) == 1 else f'{len(sku_codes)}_skus'
         filename = f'sku_detail_{sku_label}_{type_label}_{start_date_str}_{end_date_str}_{timestamp}.xlsx'
 
         # Crear respuesta HTTP
@@ -553,7 +637,7 @@ class SKUDetailByCityPOCWeeklyReportDownloadView(APIView):
             'year_week_pairs': year_week_pairs
         }
 
-    def _get_sales_data(self, sku_codes, year_week_pairs, report_type='hectolitros'):
+    def _get_sales_data(self, sku_codes, year_week_pairs, report_type='hectolitros', sku_to_group=None):
         """Obtener datos de ventas de uno o más SKUs."""
         filters = Q(
             deleted_at__isnull=True,
@@ -562,7 +646,7 @@ class SKUDetailByCityPOCWeeklyReportDownloadView(APIView):
             poc_city__isnull=False,
             poc_id__isnull=False
         )
-        
+
         # Agregar filtro para SKUs (case-insensitive)
         sku_filter = Q()
         for sku_code in sku_codes:
@@ -573,7 +657,7 @@ class SKUDetailByCityPOCWeeklyReportDownloadView(APIView):
             filters &= Q(hectolitros__isnull=False)
         else:
             filters &= Q(
-                orders__isnull=False, 
+                orders__isnull=False,
                 units_assigned__isnull=False,
                 unidades_por_caja__isnull=False,
                 unidades_por_caja__gt=0  # Evitar división por cero
@@ -616,11 +700,12 @@ class SKUDetailByCityPOCWeeklyReportDownloadView(APIView):
         }
 
         for item in sales_queryset:
-            sku_code = item['sku_vtex']
-            
+            sku = item['sku_vtex']
+            group_key = sku_to_group.get(sku, sku) if sku_to_group else sku
+
             # Establecer nombre del producto si no existe
-            if not data_structure['skus'][sku_code]['product_name']:
-                data_structure['skus'][sku_code]['product_name'] = item['name_homologated'] or item['name'] or 'Sin nombre'
+            if not data_structure['skus'][group_key]['product_name']:
+                data_structure['skus'][group_key]['product_name'] = item['name_homologated'] or item['name'] or 'Sin nombre'
 
             city = item['poc_city'] or 'Sin ciudad'
             poc_id = item['poc_id'] or 'Sin ID'
@@ -628,23 +713,30 @@ class SKUDetailByCityPOCWeeklyReportDownloadView(APIView):
             poc_key = f"{poc_id} - {poc_name}"
             year = item['year']
             week = item['week']
-            value = Decimal(str(item['total_value'])) if item['total_value'] else Decimal('0')
+            value = Decimal(str(item['total_value'])
+                            ) if item['total_value'] else Decimal('0')
 
-            data_structure['skus'][sku_code]['cities'][city][poc_key][(year, week)] = value
+            data_structure['skus'][group_key]['cities'][city][poc_key][(
+                year, week)] += value
 
         return data_structure
 
-    def _build_response(self, sales_data, weeks_list):
-        """Construir respuesta JSON estructurada para múltiples SKUs."""
+    def _build_response(self, sales_data, weeks_list, groups_info=None):
+        """Construir respuesta JSON estructurada para múltiples SKUs/grupos."""
         response = {'skus': {}}
         skus_data = sales_data.get('skus', {})
 
-        for sku_code, sku_data in skus_data.items():
-            product_name = sku_data.get('product_name', 'Producto no encontrado')
+        for group_key, sku_data in skus_data.items():
+            product_name = sku_data.get(
+                'product_name', 'Producto no encontrado')
             cities_data = sku_data.get('cities', {})
 
+            group_data = groups_info.get(group_key, {}) if groups_info else {}
+
             sku_response = {
-                'product_name': product_name,
+                'sku_codes': group_data.get('sku_codes', [group_key]),
+                'product_name': group_data.get('product_name', product_name),
+                'homologated': group_data.get('homologated', False),
                 'cities': {},
                 'total': 0
             }
@@ -678,20 +770,23 @@ class SKUDetailByCityPOCWeeklyReportDownloadView(APIView):
                         sku_response[week_id] += week_value
                         sku_response['total'] += week_value
 
-                    poc_response['total'] = round(float(poc_response['total']), 2)
+                    poc_response['total'] = round(
+                        float(poc_response['total']), 2)
                     city_response['pocs'][poc_key] = poc_response
 
-                city_response['total'] = round(float(city_response['total']), 2)
+                city_response['total'] = round(
+                    float(city_response['total']), 2)
                 for week_id in weeks_list:
-                    city_response[week_id] = round(float(city_response[week_id]), 2)
+                    city_response[week_id] = round(
+                        float(city_response[week_id]), 2)
 
                 sku_response['cities'][city] = city_response
 
             sku_response['total'] = round(float(sku_response['total']), 2)
             for week_id in weeks_list:
                 sku_response[week_id] = round(float(sku_response[week_id]), 2)
-            
-            response['skus'][sku_code] = sku_response
+
+            response['skus'][group_key] = sku_response
 
         return response
 
@@ -700,14 +795,16 @@ class SKUDetailByCityPOCWeeklyReportDownloadView(APIView):
         rows = []
         skus_data = response_data.get('skus', {})
 
-        for sku_code, sku_info in skus_data.items():
-            product_name = sku_info.get('product_name', 'Producto no encontrado')
+        for group_key, sku_info in skus_data.items():
+            product_name = sku_info.get(
+                'product_name', 'Producto no encontrado')
+            sku_codes_str = ', '.join(sku_info.get('sku_codes', [group_key]))
             cities_data = sku_info.get('cities', {})
-            
+
             for city, city_data in cities_data.items():
                 for poc_key, poc_data in city_data.get('pocs', {}).items():
                     row = {
-                        'SKU': sku_code,
+                        'SKU': sku_codes_str,
                         'Producto': product_name,
                         'Ciudad': city,
                         'POC': poc_key,
@@ -724,6 +821,7 @@ class SKUDetailByCityPOCWeeklyReportDownloadView(APIView):
 
         # Ordenar por SKU, ciudad y total descendente
         if not df.empty:
-            df = df.sort_values(['SKU', 'Ciudad', 'Total'], ascending=[True, True, False])
+            df = df.sort_values(['SKU', 'Ciudad', 'Total'],
+                                ascending=[True, True, False])
 
         return df

@@ -15,7 +15,7 @@ from tada.utils.constants import APPS
 
 class HectolitresYearlyComparisonReportView(APIView):
     """
-    Vista para obtener comparativa de hectolitros por año para las mismas semanas.
+    Vista para obtener comparativa de hectolitros por año para los mismos días de un mes.
     """
     permission_classes = [IsAuthenticated]
 
@@ -24,42 +24,55 @@ class HectolitresYearlyComparisonReportView(APIView):
         Obtener comparativa de hectolitros por año.
 
         Query params:
-        - start_year: Año inicial (requerido)
-        - end_year: Año final (requerido)
-        - start_week: Semana inicial (requerido, 1-53)
-        - end_week: Semana final (requerido, 1-53)
+        - start_month: Mes-año inicial en formato YYYY-MM (requerido, ej: "2025-01")
+        - end_month: Mes-año final en formato YYYY-MM (requerido, ej: "2026-01")
+        - start_day: Día inicial del rango (requerido, 1-31)
+        - end_day: Día final del rango (requerido, 1-31)
         - report_type: "hectolitros" o "caja" (opcional, default: "hectolitros")
 
         Returns:
         {
             "totals": {
-                "2024": 1500.50,
-                "2025": 1800.75,
-                "2026": 2100.25
+                "2025": 3700.55,
+                "2026": 3479.68
             },
             "cities": {
-                "Lima": {
-                    "2024": 800.25,
-                    "2025": 950.50,
-                    "2026": 1100.75
+                "QUITO": {
+                    "2025": 1845.70,
+                    "2026": 2265.71
                 },
-                "Arequipa": {
-                    "2024": 700.25,
-                    "2025": 850.25,
-                    "2026": 999.50
+                "GUAYAQUIL": {
+                    "2025": 1305.50,
+                    "2026": 688.20
                 }
             }
         }
         """
         # Validar parámetros requeridos
+        start_month_str = request.query_params.get('start_month')
+        end_month_str = request.query_params.get('end_month')
+
+        if not start_month_str or not end_month_str:
+            return Response(
+                {'error': 'start_month y end_month son requeridos (formato YYYY-MM)'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         try:
-            start_year = int(request.query_params.get('start_year'))
-            end_year = int(request.query_params.get('end_year'))
-            start_week = int(request.query_params.get('start_week'))
-            end_week = int(request.query_params.get('end_week'))
+            start_year, start_month_num = map(int, start_month_str.split('-'))
+            end_year, end_month_num = map(int, end_month_str.split('-'))
+        except (ValueError, AttributeError):
+            return Response(
+                {'error': 'start_month y end_month deben tener formato YYYY-MM (ej: 2025-01)'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            start_day = int(request.query_params.get('start_day'))
+            end_day = int(request.query_params.get('end_day'))
         except (TypeError, ValueError):
             return Response(
-                {'error': 'start_year, end_year, start_week y end_week son requeridos y deben ser enteros'},
+                {'error': 'start_day y end_day son requeridos y deben ser enteros'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -72,21 +85,27 @@ class HectolitresYearlyComparisonReportView(APIView):
             )
 
         # Validar rangos
-        if start_week < 1 or start_week > 53 or end_week < 1 or end_week > 53:
+        if start_month_num < 1 or start_month_num > 12 or end_month_num < 1 or end_month_num > 12:
             return Response(
-                {'error': 'start_week y end_week deben estar entre 1 y 53'},
+                {'error': 'El mes debe estar entre 01 y 12'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if start_day < 1 or start_day > 31 or end_day < 1 or end_day > 31:
+            return Response(
+                {'error': 'start_day y end_day deben estar entre 1 y 31'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
         if start_year > end_year:
             return Response(
-                {'error': 'start_year no puede ser mayor que end_year'},
+                {'error': 'El año de start_month no puede ser mayor que el de end_month'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
         # Obtener datos de ventas por año
         response_data = self._get_data_by_year(
-            start_year, end_year, start_week, end_week, report_type
+            start_year, end_year, start_month_num, end_month_num, start_day, end_day, report_type
         )
 
         # Crear log de la consulta
@@ -102,8 +121,10 @@ class HectolitresYearlyComparisonReportView(APIView):
                 filters_applied={
                     'start_year': start_year,
                     'end_year': end_year,
-                    'start_week': start_week,
-                    'end_week': end_week,
+                    'start_month': start_month_num,
+                    'end_month': end_month_num,
+                    'start_day': start_day,
+                    'end_day': end_day,
                     'report_type': f'yearly_comparison_{report_type}'
                 },
                 records_returned=total_years
@@ -113,29 +134,40 @@ class HectolitresYearlyComparisonReportView(APIView):
 
         return Response(response_data, status=status.HTTP_200_OK)
 
-    def _get_data_by_year(self, start_year, end_year, start_week, end_week, report_type):
+    def _get_data_by_year(self, start_year, end_year, start_month_num, end_month_num, start_day, end_day, report_type):
         """
-        Obtener suma por año para las mismas semanas según el tipo de reporte.
+        Obtener suma por año para los mismos días de un mes según el tipo de reporte.
 
         Returns:
             dict: {
-                "totals": {"2024": 1500.50, ...},
-                "cities": {"Lima": {"2024": 800.25, ...}, ...}
+                "totals": {"2025": 3700.55, ...},
+                "cities": {"QUITO": {"2025": 1845.70, ...}, ...}
             }
         """
         from django.db.models import F, ExpressionWrapper, DecimalField
-        from datetime import datetime, timedelta
+        import calendar
         
         totals = {}
         cities_data = {}
 
         for year in range(start_year, end_year + 1):
-            # Calcular fechas aproximadas para el rango de semanas
-            # Usamos ISO 8601 para las semanas
-            start_date = datetime.strptime(f'{year}-W{start_week:02d}-1', "%Y-W%W-%w").date()
-            # Para la fecha final, tomamos el último día de la semana final
-            end_date = datetime.strptime(f'{year}-W{end_week:02d}-0', "%Y-W%W-%w").date()
-            
+            # Determinar el mes a usar para este año
+            # Si es el año de inicio usa start_month_num, si es el de fin usa end_month_num
+            # Si todos los años tienen el mismo mes (caso típico), ambos son iguales
+            month_num = start_month_num if year == start_year else end_month_num
+            if start_month_num == end_month_num:
+                month_num = start_month_num
+
+            # Construir fechas exactas para el rango
+            # Ajustar end_day al máximo del mes si excede
+            max_day = calendar.monthrange(year, month_num)[1]
+            actual_start_day = min(start_day, max_day)
+            actual_end_day = min(end_day, max_day)
+
+            from datetime import date as date_cls
+            start_date = date_cls(year, month_num, actual_start_day)
+            end_date = date_cls(year, month_num, actual_end_day)
+
             # Primero, verificar si hay datos en YearlySalesData para este período
             yearly_total_data = YearlySalesData.objects.filter(
                 deleted_at__isnull=True,
@@ -155,7 +187,6 @@ class HectolitresYearlyComparisonReportView(APIView):
             
             # Si hay datos en YearlySalesData, usarlos
             if yearly_total_data['total'] is not None or yearly_cities_data.exists():
-                # Usar datos de YearlySalesData
                 total = yearly_total_data['total'] or Decimal('0')
                 totals[str(year)] = round(float(total), 2)
                 
@@ -169,26 +200,26 @@ class HectolitresYearlyComparisonReportView(APIView):
                     cities_data[city_name][str(year)] = round(float(city_total), 2)
                     
             else:
-                # Calcular desde SalesRecord (lógica existente)
+                # Calcular desde SalesRecord filtrando por año, mes y rango de días
+                base_filter = {
+                    'deleted_at__isnull': True,
+                    'year': year,
+                    'month': month_num,
+                    'day__gte': actual_start_day,
+                    'day__lte': actual_end_day,
+                }
+
                 if report_type == 'hectolitros':
-                    # Suma total de hectolitros
                     result = SalesRecord.objects.filter(
-                        deleted_at__isnull=True,
-                        year=year,
-                        week__gte=start_week,
-                        week__lte=end_week,
+                        **base_filter,
                         hectolitros__isnull=False
                     ).aggregate(
                         total=Sum('hectolitros')
                     )
                     total = result['total'] or Decimal('0')
                     
-                    # Suma por ciudad
                     city_results = SalesRecord.objects.filter(
-                        deleted_at__isnull=True,
-                        year=year,
-                        week__gte=start_week,
-                        week__lte=end_week,
+                        **base_filter,
                         hectolitros__isnull=False,
                         poc_city__isnull=False
                     ).values('poc_city').annotate(
@@ -196,12 +227,8 @@ class HectolitresYearlyComparisonReportView(APIView):
                     ).order_by('poc_city')
                     
                 else:  # caja
-                    # Calcular cajas: (orders * units_assigned) / unidades_por_caja
                     records = SalesRecord.objects.filter(
-                        deleted_at__isnull=True,
-                        year=year,
-                        week__gte=start_week,
-                        week__lte=end_week,
+                        **base_filter,
                         unidades_por_caja__isnull=False,
                         unidades_por_caja__gt=0,
                         orders__isnull=False,
@@ -216,12 +243,8 @@ class HectolitresYearlyComparisonReportView(APIView):
                     )
                     total = records['total'] or Decimal('0')
                     
-                    # Suma por ciudad
                     city_results = SalesRecord.objects.filter(
-                        deleted_at__isnull=True,
-                        year=year,
-                        week__gte=start_week,
-                        week__lte=end_week,
+                        **base_filter,
                         unidades_por_caja__isnull=False,
                         unidades_por_caja__gt=0,
                         orders__isnull=False,
@@ -236,10 +259,8 @@ class HectolitresYearlyComparisonReportView(APIView):
                         )
                     ).order_by('poc_city')
 
-                # Guardar total del año (calculado)
                 totals[str(year)] = round(float(total), 2)
 
-                # Procesar resultados por ciudad
                 for city_item in city_results:
                     city_name = city_item['poc_city']
                     city_total = city_item.get('total') or city_item.get('cajas') or Decimal('0')
@@ -266,24 +287,40 @@ class HectolitresYearlyComparisonReportDownloadView(APIView):
         Descargar comparativa de hectolitros por año en Excel.
 
         Query params:
-        - start_year: Año inicial (requerido)
-        - end_year: Año final (requerido)
-        - start_week: Semana inicial (requerido, 1-53)
-        - end_week: Semana final (requerido, 1-53)
+        - start_month: Mes-año inicial en formato YYYY-MM (requerido)
+        - end_month: Mes-año final en formato YYYY-MM (requerido)
+        - start_day: Día inicial del rango (requerido, 1-31)
+        - end_day: Día final del rango (requerido, 1-31)
         - report_type: "hectolitros" o "caja" (opcional, default: "hectolitros")
 
         Returns:
         Archivo Excel con comparativa de hectolitros por año
         """
-        # Validar parámetros (mismo código que la vista anterior)
+        # Validar parámetros requeridos
+        start_month_str = request.query_params.get('start_month')
+        end_month_str = request.query_params.get('end_month')
+
+        if not start_month_str or not end_month_str:
+            return Response(
+                {'error': 'start_month y end_month son requeridos (formato YYYY-MM)'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         try:
-            start_year = int(request.query_params.get('start_year'))
-            end_year = int(request.query_params.get('end_year'))
-            start_week = int(request.query_params.get('start_week'))
-            end_week = int(request.query_params.get('end_week'))
+            start_year, start_month_num = map(int, start_month_str.split('-'))
+            end_year, end_month_num = map(int, end_month_str.split('-'))
+        except (ValueError, AttributeError):
+            return Response(
+                {'error': 'start_month y end_month deben tener formato YYYY-MM (ej: 2025-01)'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            start_day = int(request.query_params.get('start_day'))
+            end_day = int(request.query_params.get('end_day'))
         except (TypeError, ValueError):
             return Response(
-                {'error': 'start_year, end_year, start_week y end_week son requeridos y deben ser enteros'},
+                {'error': 'start_day y end_day son requeridos y deben ser enteros'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -295,21 +332,27 @@ class HectolitresYearlyComparisonReportDownloadView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        if start_week < 1 or start_week > 53 or end_week < 1 or end_week > 53:
+        if start_month_num < 1 or start_month_num > 12 or end_month_num < 1 or end_month_num > 12:
             return Response(
-                {'error': 'start_week y end_week deben estar entre 1 y 53'},
+                {'error': 'El mes debe estar entre 01 y 12'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if start_day < 1 or start_day > 31 or end_day < 1 or end_day > 31:
+            return Response(
+                {'error': 'start_day y end_day deben estar entre 1 y 31'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
         if start_year > end_year:
             return Response(
-                {'error': 'start_year no puede ser mayor que end_year'},
+                {'error': 'El año de start_month no puede ser mayor que el de end_month'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
         # Obtener datos de ventas por año
         data = self._get_data_by_year(
-            start_year, end_year, start_week, end_week, report_type
+            start_year, end_year, start_month_num, end_month_num, start_day, end_day, report_type
         )
 
         # Crear DataFrame para totales
@@ -346,8 +389,10 @@ class HectolitresYearlyComparisonReportDownloadView(APIView):
                 filters_applied={
                     'start_year': start_year,
                     'end_year': end_year,
-                    'start_week': start_week,
-                    'end_week': end_week,
+                    'start_month': start_month_num,
+                    'end_month': end_month_num,
+                    'start_day': start_day,
+                    'end_day': end_day,
                     'report_type': f'yearly_comparison_{report_type}'
                 },
                 records_returned=total_years
@@ -389,7 +434,7 @@ class HectolitresYearlyComparisonReportDownloadView(APIView):
         # Generar nombre de archivo
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         type_label = 'hectolitros' if report_type == 'hectolitros' else 'cajas'
-        filename = f'comparativa_{type_label}_{start_year}_{end_year}_W{start_week}-W{end_week}_{timestamp}.xlsx'
+        filename = f'comparativa_{type_label}_{start_year}_{end_year}_M{start_month_num}_D{start_day}-D{end_day}_{timestamp}.xlsx'
 
         # Crear respuesta HTTP
         response = HttpResponse(
@@ -400,31 +445,37 @@ class HectolitresYearlyComparisonReportDownloadView(APIView):
 
         return response
 
-    def _get_data_by_year(self, start_year, end_year, start_week, end_week, report_type):
+    def _get_data_by_year(self, start_year, end_year, start_month_num, end_month_num, start_day, end_day, report_type):
         """
-        Obtener suma por año para las mismas semanas según el tipo de reporte.
+        Obtener suma por año para los mismos días de un mes según el tipo de reporte.
         (Mismo método que la vista anterior)
         """
         from django.db.models import F, ExpressionWrapper, DecimalField
-        from datetime import datetime, timedelta
+        import calendar
         
         totals = {}
         cities_data = {}
 
         for year in range(start_year, end_year + 1):
-            # Calcular fechas aproximadas para el rango de semanas
-            # Usamos ISO 8601 para las semanas
-            start_date = datetime.strptime(f'{year}-W{start_week:02d}-1', "%Y-W%W-%w").date()
-            # Para la fecha final, tomamos el último día de la semana final
-            end_date = datetime.strptime(f'{year}-W{end_week:02d}-0', "%Y-W%W-%w").date()
-            
+            month_num = start_month_num if year == start_year else end_month_num
+            if start_month_num == end_month_num:
+                month_num = start_month_num
+
+            max_day = calendar.monthrange(year, month_num)[1]
+            actual_start_day = min(start_day, max_day)
+            actual_end_day = min(end_day, max_day)
+
+            from datetime import date as date_cls
+            start_date = date_cls(year, month_num, actual_start_day)
+            end_date = date_cls(year, month_num, actual_end_day)
+
             # Primero, verificar si hay datos en YearlySalesData para este período
             yearly_total_data = YearlySalesData.objects.filter(
                 deleted_at__isnull=True,
                 date__gte=start_date,
                 date__lte=end_date,
                 report_type=report_type,
-                city__isnull=True  # Total general
+                city__isnull=True
             ).aggregate(total=Sum('total'))
             
             yearly_cities_data = YearlySalesData.objects.filter(
@@ -432,12 +483,10 @@ class HectolitresYearlyComparisonReportDownloadView(APIView):
                 date__gte=start_date,
                 date__lte=end_date,
                 report_type=report_type,
-                city__isnull=False  # Datos por ciudad
+                city__isnull=False
             ).values('city').annotate(total=Sum('total'))
             
-            # Si hay datos en YearlySalesData, usarlos
             if yearly_total_data['total'] is not None or yearly_cities_data.exists():
-                # Usar datos de YearlySalesData
                 total = yearly_total_data['total'] or Decimal('0')
                 totals[str(year)] = round(float(total), 2)
                 
@@ -451,26 +500,25 @@ class HectolitresYearlyComparisonReportDownloadView(APIView):
                     cities_data[city_name][str(year)] = round(float(city_total), 2)
                     
             else:
-                # Calcular desde SalesRecord (lógica existente)
+                base_filter = {
+                    'deleted_at__isnull': True,
+                    'year': year,
+                    'month': month_num,
+                    'day__gte': actual_start_day,
+                    'day__lte': actual_end_day,
+                }
+
                 if report_type == 'hectolitros':
-                    # Suma total de hectolitros
                     result = SalesRecord.objects.filter(
-                        deleted_at__isnull=True,
-                        year=year,
-                        week__gte=start_week,
-                        week__lte=end_week,
+                        **base_filter,
                         hectolitros__isnull=False
                     ).aggregate(
                         total=Sum('hectolitros')
                     )
                     total = result['total'] or Decimal('0')
                     
-                    # Suma por ciudad
                     city_results = SalesRecord.objects.filter(
-                        deleted_at__isnull=True,
-                        year=year,
-                        week__gte=start_week,
-                        week__lte=end_week,
+                        **base_filter,
                         hectolitros__isnull=False,
                         poc_city__isnull=False
                     ).values('poc_city').annotate(
@@ -478,12 +526,8 @@ class HectolitresYearlyComparisonReportDownloadView(APIView):
                     ).order_by('poc_city')
                     
                 else:  # caja
-                    # Calcular cajas: (orders * units_assigned) / unidades_por_caja
                     records = SalesRecord.objects.filter(
-                        deleted_at__isnull=True,
-                        year=year,
-                        week__gte=start_week,
-                        week__lte=end_week,
+                        **base_filter,
                         unidades_por_caja__isnull=False,
                         unidades_por_caja__gt=0,
                         orders__isnull=False,
@@ -498,12 +542,8 @@ class HectolitresYearlyComparisonReportDownloadView(APIView):
                     )
                     total = records['total'] or Decimal('0')
                     
-                    # Suma por ciudad
                     city_results = SalesRecord.objects.filter(
-                        deleted_at__isnull=True,
-                        year=year,
-                        week__gte=start_week,
-                        week__lte=end_week,
+                        **base_filter,
                         unidades_por_caja__isnull=False,
                         unidades_por_caja__gt=0,
                         orders__isnull=False,
@@ -518,10 +558,8 @@ class HectolitresYearlyComparisonReportDownloadView(APIView):
                         )
                     ).order_by('poc_city')
 
-                # Guardar total del año (calculado)
                 totals[str(year)] = round(float(total), 2)
 
-                # Procesar resultados por ciudad
                 for city_item in city_results:
                     city_name = city_item['poc_city']
                     city_total = city_item.get('total') or city_item.get('cajas') or Decimal('0')

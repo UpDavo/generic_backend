@@ -248,6 +248,83 @@ class VentasProductosCompraSearchView(APIView):
         return Response(serializer.data)
 
 
+class VentasProductosCompraSearchHomologatedView(APIView):
+    """
+    View to search VentasProductosCompra grouped by homologated names.
+    Products sharing the same homologated name are grouped together.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        """
+        Search VentasProductosCompra and group by homologated name.
+
+        Query params:
+        - search: Search term for name, code, or brand
+
+        Returns:
+            List of grouped products:
+            [
+                {
+                    "ids": [3, 125],
+                    "codes": ["8431", "20830"],
+                    "name": "pilsener botella 1000 rb"
+                },
+                ...
+            ]
+        """
+        search_term = request.query_params.get('search', '').strip()
+
+        queryset = VentasProductosCompra.objects.all()
+
+        if search_term:
+            from django.db.models import Q
+            queryset = queryset.filter(
+                Q(name__icontains=search_term) |
+                Q(code__icontains=search_term) |
+                Q(brand__icontains=search_term) |
+                Q(homologated_names__icontains=search_term)
+            )
+
+        queryset = queryset.order_by('name')[:200]
+
+        # Group by homologated name
+        homologated_groups = {}  # key: homologated_name -> list of products
+        no_homologated = []  # products without homologated names
+
+        for product in queryset:
+            names = product.homologated_names or []
+            if names:
+                for h_name in names:
+                    h_key = h_name.strip().lower()
+                    if h_key not in homologated_groups:
+                        homologated_groups[h_key] = {
+                            'ids': [],
+                            'codes': [],
+                            'name': h_name.strip().upper(),
+                            'homologated': True,
+                        }
+                    if product.id not in homologated_groups[h_key]['ids']:
+                        homologated_groups[h_key]['ids'].append(product.id)
+                    if product.code not in homologated_groups[h_key]['codes']:
+                        homologated_groups[h_key]['codes'].append(product.code)
+            else:
+                no_homologated.append({
+                    'ids': [product.id],
+                    'codes': [product.code],
+                    'name': product.name.upper() if product.name else product.name,
+                    'homologated': False,
+                })
+
+        homologated_list = list(homologated_groups.values())
+        homologated_list.sort(key=lambda x: x['name'].lower())
+        no_homologated.sort(key=lambda x: x['name'].lower() if x['name'] else '')
+
+        result = homologated_list + no_homologated
+
+        return Response(result)
+
+
 class VentasProductosCompraRetrieveUpdateDestroyView(APIView):
     """
     View to retrieve, update or delete a specific VentasProductosCompra.
