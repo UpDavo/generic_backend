@@ -143,6 +143,12 @@ urlpatterns = [
     path('sku-detail/city-poc/weekly-report/download/', SKUDetailByCityPOCWeeklyReportDownloadView.as_view(),
          name='sku-detail-city-poc-weekly-report-download'),
     
+    # Venta hectolitros/cajas por POC y fecha
+    path('venta-hecto-por-poc/', VentaHectoPorPocView.as_view(),
+         name='venta-hecto-por-poc'),
+    path('venta-hecto-por-poc/download/', VentaHectoPorPocDownloadView.as_view(),
+         name='venta-hecto-por-poc-download'),
+    
     # Comparativa anual de hectolitros
     path('hectolitres/yearly-comparison/', HectolitresYearlyComparisonReportView.as_view(),
          name='hectolitres-yearly-comparison'),
