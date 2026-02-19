@@ -1,5 +1,7 @@
+import datetime as dt
 from io import BytesIO
 from django.http import HttpResponse
+from django.utils.timezone import make_aware
 import openpyxl
 from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView, ListAPIView
 from rest_framework.views import APIView
@@ -13,11 +15,11 @@ from authentication.models import CustomUser
 
 class NotificationLogFilter(django_filters.FilterSet):
     sent_at = django_filters.DateFilter(
-        field_name="sent_at", lookup_expr="exact")
+        field_name="sent_at", method="filter_sent_at_exact")
     sent_at__gte = django_filters.DateFilter(
-        field_name="sent_at", lookup_expr="gte")
+        field_name="sent_at", method="filter_sent_at_gte")
     sent_at__lte = django_filters.DateFilter(
-        field_name="sent_at", lookup_expr="lte")
+        field_name="sent_at", method="filter_sent_at_lte")
 
     user = django_filters.ModelMultipleChoiceFilter(
         queryset=CustomUser.objects.all(),
@@ -28,13 +30,32 @@ class NotificationLogFilter(django_filters.FilterSet):
     class Meta:
         model = NotificationLog
         fields = ["sent_at", "user"]
+
+    def filter_sent_at_exact(self, queryset, name, value):
+        if value:
+            start = make_aware(dt.datetime.combine(value, dt.time.min))
+            end = make_aware(dt.datetime.combine(value, dt.time.max))
+            return queryset.filter(sent_at__gte=start, sent_at__lte=end)
+        return queryset
+
+    def filter_sent_at_gte(self, queryset, name, value):
+        if value:
+            aware_dt = make_aware(dt.datetime.combine(value, dt.time.min))
+            return queryset.filter(sent_at__gte=aware_dt)
+        return queryset
+
+    def filter_sent_at_lte(self, queryset, name, value):
+        if value:
+            aware_dt = make_aware(dt.datetime.combine(value, dt.time.max))
+            return queryset.filter(sent_at__lte=aware_dt)
+        return queryset
 
 
 class NotificationLogRangeFilter(django_filters.FilterSet):
     sent_at__gte = django_filters.DateFilter(
-        field_name="sent_at", lookup_expr="gte")
+        field_name="sent_at", method="filter_sent_at_gte")
     sent_at__lte = django_filters.DateFilter(
-        field_name="sent_at", lookup_expr="lte")
+        field_name="sent_at", method="filter_sent_at_lte")
     user = django_filters.ModelMultipleChoiceFilter(
         queryset=CustomUser.objects.all(),
         field_name="user__email",   # <--- Importante: referencia al email
@@ -44,6 +65,18 @@ class NotificationLogRangeFilter(django_filters.FilterSet):
     class Meta:
         model = NotificationLog
         fields = ["sent_at", "user"]
+
+    def filter_sent_at_gte(self, queryset, name, value):
+        if value:
+            aware_dt = make_aware(dt.datetime.combine(value, dt.time.min))
+            return queryset.filter(sent_at__gte=aware_dt)
+        return queryset
+
+    def filter_sent_at_lte(self, queryset, name, value):
+        if value:
+            aware_dt = make_aware(dt.datetime.combine(value, dt.time.max))
+            return queryset.filter(sent_at__lte=aware_dt)
+        return queryset
 
 
 class NotificationMessageFilter(django_filters.FilterSet):
@@ -56,7 +89,7 @@ class NotificationMessageFilter(django_filters.FilterSet):
 
 
 class NotificationMessageListCreateView(ListCreateAPIView):
-    queryset = NotificationMessage.objects.filter(deleted_at__isnull=True)
+    queryset = NotificationMessage.objects.filter(deleted_at__isnull=True).order_by("-created_at")
     serializer_class = NotificationMessageSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
@@ -64,7 +97,7 @@ class NotificationMessageListCreateView(ListCreateAPIView):
 
 
 class NotificationMessageRetrieveUpdateDestroyView(RetrieveUpdateDestroyAPIView):
-    queryset = NotificationMessage.objects.filter(deleted_at__isnull=True)
+    queryset = NotificationMessage.objects.filter(deleted_at__isnull=True).order_by("-created_at")
     serializer_class = NotificationMessageSerializer
     permission_classes = [IsAuthenticated]
 

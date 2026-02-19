@@ -1,6 +1,6 @@
 import uuid
-from datetime import datetime
 from django.db import models
+from django.utils.timezone import now
 
 
 class BaseModel(models.Model):
@@ -12,7 +12,7 @@ class BaseModel(models.Model):
     deleted_at = models.DateTimeField(null=True)
 
     def delete(self, *args, **kwargs):
-        self.deleted_at = datetime.now()
+        self.deleted_at = now()
 
         super(BaseModel, self).save(*args, **kwargs)
 
