@@ -1516,6 +1516,10 @@ class OptimizedSalesRecordDeleteByDateRangeView(APIView):
         # Usar SQL directo para borrado masivo eficiente
         deleted_count = self._bulk_delete_by_date_range(start_date, end_date)
 
+        # Invalidar hashes de archivos que cubren este rango de fechas
+        # para permitir reprocesar el mismo archivo
+        invalidated_files = self._invalidate_file_hashes(start_date, end_date)
+
         end_time = time.time()
         processing_duration = Decimal(str(round(end_time - start_time, 3)))
 
@@ -1532,12 +1536,15 @@ class OptimizedSalesRecordDeleteByDateRangeView(APIView):
 
         if settings.DEBUG:
             print(f"🗑️ Eliminados {deleted_count} registros en {processing_duration}s")
+            if invalidated_files > 0:
+                print(f"🔓 Invalidados {invalidated_files} archivos (hashes limpiados para reprocesamiento)")
 
         return Response({
             'message': f'Se eliminaron {deleted_count} registros',
             'start_date': start_date_str,
             'end_date': end_date_str,
             'records_deleted': deleted_count,
+            'files_invalidated': invalidated_files,
             'processing_time_seconds': float(processing_duration)
         }, status=status.HTTP_200_OK)
 
@@ -1575,6 +1582,53 @@ class OptimizedSalesRecordDeleteByDateRangeView(APIView):
             )
             
             return count
+
+
+    def _invalidate_file_hashes(self, start_date, end_date):
+        """
+        Hard-delete de SalesFileStorage y SalesFileRowHash cuyos rangos de 
+        fechas se solapen con el rango eliminado.
+        
+        Se usa hard_delete (no soft-delete) para ser consistente con el 
+        DELETE SQL directo que se hace sobre SalesRecord, y garantizar que 
+        los hashes no bloqueen un reprocesamiento futuro.
+        """
+        # Buscar archivos procesados cuyo rango de fechas se solape
+        # con el rango eliminado:
+        #   file_start <= end_date AND file_end >= start_date
+        overlapping_files = SalesFileStorage.objects.filter(
+            processed=True,
+            deleted_at__isnull=True,
+            date_range_start__lte=end_date,
+            date_range_end__gte=start_date
+        )
+
+        count = overlapping_files.count()
+
+        if count > 0:
+            file_ids = list(overlapping_files.values_list('id', flat=True))
+            
+            # Hard-delete de los row hashes asociados (SQL directo)
+            row_hash_table = SalesFileRowHash._meta.db_table
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"DELETE FROM {row_hash_table} WHERE sales_file_id IN %s",
+                    [tuple(file_ids)]
+                )
+            
+            # Hard-delete de los archivos: borrar de S3 y eliminar registro de BD
+            for sf in SalesFileStorage.objects.filter(id__in=file_ids):
+                try:
+                    if sf.file:
+                        sf.delete_file()
+                except Exception:
+                    pass
+                sf.hard_delete()
+
+            if settings.DEBUG:
+                print(f"🔓 Archivos hard-deleted: {file_ids}")
+
+        return count
 
 
 class OptimizedBulkTruncateView(APIView):
