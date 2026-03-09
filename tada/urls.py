@@ -149,6 +149,12 @@ urlpatterns = [
     path('venta-hecto-por-poc/download/', VentaHectoPorPocDownloadView.as_view(),
          name='venta-hecto-por-poc-download'),
     
+    # Special Items Legacy
+    path('special-items-legacy/', SpecialItemsLegacyListView.as_view(),
+         name='special-items-legacy-list'),
+    path('special-items-legacy/download/', SpecialItemsLegacyDownloadView.as_view(),
+         name='special-items-legacy-download'),
+    
     # Comparativa anual de hectolitros
     path('hectolitres/yearly-comparison/', HectolitresYearlyComparisonReportView.as_view(),
          name='hectolitres-yearly-comparison'),

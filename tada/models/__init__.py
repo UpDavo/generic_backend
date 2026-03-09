@@ -20,3 +20,4 @@ from .salesUploadLog import SalesUploadLog
 from .negativosJustificacion import NegativosJustificacion
 from .yearlySalesData import YearlySalesData
 from .salesFileStorage import SalesFileStorage, SalesFileRowHash
+from .specialItemsLegacy import SpecialItemsLegacy

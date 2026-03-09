@@ -181,25 +181,29 @@ class SKUDetailByCityPOCWeeklyReportView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Generar información de semanas desde las fechas
-        weeks_info = self._generate_weeks_from_dates(
-            start_date_obj, end_date_obj)
+        # Modo por fechas individuales (dates=true) o por semanas ISO (default)
+        dates_mode = request.query_params.get('dates', 'false').strip().lower() == 'true'
 
-        if not weeks_info or not weeks_info['weeks_list']:
-            return Response(
-                {'error': 'No se pudieron generar semanas para el rango especificado'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        weeks_list = weeks_info['weeks_list']
-        year_week_pairs = weeks_info['year_week_pairs']
+        if dates_mode:
+            periods_list = self._generate_dates_list(start_date_obj, end_date_obj)
+            year_week_pairs = None
+        else:
+            weeks_info = self._generate_weeks_from_dates(start_date_obj, end_date_obj)
+            if not weeks_info or not weeks_info['weeks_list']:
+                return Response(
+                    {'error': 'No se pudieron generar semanas para el rango especificado'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            periods_list = weeks_info['weeks_list']
+            year_week_pairs = weeks_info['year_week_pairs']
 
         # Agrupar SKUs por nombre homologado
         sku_to_group, groups_info = _group_skus_by_homologated(sku_codes)
 
         # Obtener datos de ventas de los SKUs
         sales_data = self._get_sales_data(
-            sku_codes, year_week_pairs, report_type, sku_to_group
+            sku_codes, year_week_pairs, report_type, sku_to_group,
+            dates_mode=dates_mode, start_date=start_date_obj, end_date=end_date_obj
         )
 
         if not sales_data or not sales_data.get('skus'):
@@ -210,7 +214,7 @@ class SKUDetailByCityPOCWeeklyReportView(APIView):
 
         # Construir respuesta estructurada
         response_data = self._build_response(
-            sales_data, weeks_list, groups_info)
+            sales_data, periods_list, groups_info, dates_mode=dates_mode)
 
         # Crear log de la consulta
         try:
@@ -224,7 +228,8 @@ class SKUDetailByCityPOCWeeklyReportView(APIView):
                     'sku_codes': sku_codes,
                     'start_date': start_date_str,
                     'end_date': end_date_str,
-                    'report_type': report_type
+                    'report_type': report_type,
+                    'dates_mode': dates_mode
                 },
                 records_returned=len(sales_data.get('skus', {}))
             )
@@ -258,42 +263,52 @@ class SKUDetailByCityPOCWeeklyReportView(APIView):
             'year_week_pairs': year_week_pairs
         }
 
-    def _get_sales_data(self, sku_codes, year_week_pairs, report_type='hectolitros', sku_to_group=None):
+    def _generate_dates_list(self, start_date, end_date):
+        """
+        Generar lista de fechas individuales en formato YYYY-MM-DD desde un rango.
+        Se usa cuando dates=true en el request.
+        """
+        dates = []
+        current = start_date
+        while current <= end_date:
+            dates.append(str(current))
+            current += timedelta(days=1)
+        return dates
+
+    def _get_sales_data(self, sku_codes, year_week_pairs, report_type='hectolitros', sku_to_group=None, dates_mode=False, start_date=None, end_date=None):
         """
         Obtener datos de ventas de uno o más SKUs agrupados por SKU, ciudad y POC.
 
         Args:
             sku_codes: Lista de códigos de SKU a consultar
-            year_week_pairs: Lista de tuplas (año, semana)
+            year_week_pairs: Lista de tuplas (año, semana). Ignorado cuando dates_mode=True.
             report_type: 'hectolitros' o 'caja'
+            dates_mode: Si True, agrupa por fecha individual en lugar de semana ISO.
+            start_date/end_date: Requeridos cuando dates_mode=True.
 
         Returns:
-            dict: {
-                'skus': {
-                    'sku_code': {
-                        'product_name': str,
-                        'cities': {
-                            city: {
-                                pocs: {
-                                    poc_key: {(year, week): value}
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            dict: sku -> city -> poc -> {key: value}
+            key es (year, week) en modo semana, o 'YYYY-MM-DD' en modo fecha.
         """
-        # Construir filtro base (sin SKU aún)
-        filters = Q(
-            deleted_at__isnull=True,
-            year__isnull=False,
-            week__isnull=False,
-            poc_city__isnull=False,
-            poc_id__isnull=False
-        )
+        # Construir filtro base
+        if dates_mode:
+            filters = Q(
+                deleted_at__isnull=True,
+                poc_city__isnull=False,
+                poc_id__isnull=False,
+                date__gte=start_date,
+                date__lte=end_date
+            )
+        else:
+            filters = Q(
+                deleted_at__isnull=True,
+                year__isnull=False,
+                week__isnull=False,
+                poc_city__isnull=False,
+                poc_id__isnull=False
+            )
 
         # Agregar filtro para múltiples SKUs (case-insensitive)
-        # Usar OR con iexact para cada SKU individualmente
         sku_filter = Q()
         for sku_code in sku_codes:
             sku_filter |= Q(sku_vtex__iexact=sku_code)
@@ -310,21 +325,29 @@ class SKUDetailByCityPOCWeeklyReportView(APIView):
                 unidades_por_caja__gt=0  # Evitar división por cero
             )
 
-        # Filtrar por pares (año, semana) específicos
-        year_week_filter = Q()
-        for year, week in year_week_pairs:
-            year_week_filter |= Q(year=year, week=week)
-        filters &= year_week_filter
-        # Obtener datos agrupados con anotación según tipo de reporte
-        grouping_fields = ['sku_vtex', 'poc_city', 'poc_id', 'poc_name',
-                           'name_homologated', 'name', 'year', 'week']
+        if not dates_mode:
+            # Filtrar por pares (año, semana) específicos
+            year_week_filter = Q()
+            for year, week in year_week_pairs:
+                year_week_filter |= Q(year=year, week=week)
+            filters &= year_week_filter
+
+        # Campos de agrupación según modo
+        if dates_mode:
+            grouping_fields = ['sku_vtex', 'poc_city', 'poc_id', 'poc_name',
+                               'name_homologated', 'name', 'date']
+            order_fields = ['sku_vtex', 'poc_city', 'poc_id', 'date']
+        else:
+            grouping_fields = ['sku_vtex', 'poc_city', 'poc_id', 'poc_name',
+                               'name_homologated', 'name', 'year', 'week']
+            order_fields = ['sku_vtex', 'poc_city', 'poc_id', 'year', 'week']
 
         if report_type == 'hectolitros':
             sales_queryset = SalesRecord.objects.filter(filters).values(
                 *grouping_fields
             ).annotate(
                 total_value=Sum('hectolitros')
-            ).order_by('poc_city', 'poc_id', 'year', 'week')
+            ).order_by(*order_fields)
         else:  # caja
             sales_queryset = SalesRecord.objects.filter(filters).values(
                 *grouping_fields
@@ -336,9 +359,11 @@ class SKUDetailByCityPOCWeeklyReportView(APIView):
                         output_field=DecimalField()
                     )
                 )
-            ).order_by('sku_vtex', 'poc_city', 'poc_id', 'year', 'week')
+            ).order_by(*order_fields)
 
-        # Organizar datos en estructura anidada: sku -> city -> poc -> (year, week) -> value
+        # Organizar datos en estructura anidada
+        # Modo semana: sku -> city -> poc -> {(year, week): value}
+        # Modo fecha:  sku -> city -> poc -> {'YYYY-MM-DD': value}
         data_structure = {
             'skus': defaultdict(lambda: {
                 'product_name': None,
@@ -350,7 +375,6 @@ class SKUDetailByCityPOCWeeklyReportView(APIView):
             sku = item['sku_vtex']
             group_key = sku_to_group.get(sku, sku) if sku_to_group else sku
 
-            # Capturar nombre del producto (solo una vez por grupo)
             if not data_structure['skus'][group_key]['product_name']:
                 data_structure['skus'][group_key]['product_name'] = item['name_homologated'] or item['name'] or 'Sin nombre'
 
@@ -358,19 +382,21 @@ class SKUDetailByCityPOCWeeklyReportView(APIView):
             poc_id = item['poc_id'] or 'Sin ID'
             poc_name = item['poc_name'] or 'Sin nombre'
             poc_key = f"{poc_id} - {poc_name}"
-            year = item['year']
-            week = item['week']
-            value = Decimal(str(item['total_value'])
-                            ) if item['total_value'] else Decimal('0')
+            value = Decimal(str(item['total_value'])) if item['total_value'] else Decimal('0')
 
-            data_structure['skus'][group_key]['cities'][city][poc_key][(
-                year, week)] += value
+            if dates_mode:
+                period_key = str(item['date'])
+            else:
+                period_key = (item['year'], item['week'])
+
+            data_structure['skus'][group_key]['cities'][city][poc_key][period_key] += value
 
         return data_structure
 
-    def _build_response(self, sales_data, weeks_list, groups_info=None):
+    def _build_response(self, sales_data, periods_list, groups_info=None, dates_mode=False):
         """
         Construir respuesta JSON estructurada por SKUs/grupos, ciudades y POCs.
+        periods_list contiene claves 'wN' (modo semana) o 'YYYY-MM-DD' (modo fecha).
         """
         skus_data = sales_data.get('skus', {})
 
@@ -394,65 +420,59 @@ class SKUDetailByCityPOCWeeklyReportView(APIView):
                 'total': 0
             }
 
-            # Inicializar totales por semana a nivel de SKU
-            for week_id in weeks_list:
-                sku_response[week_id] = 0
+            for period_id in periods_list:
+                sku_response[period_id] = 0
 
-            # Procesar cada ciudad
             for city, pocs_data in cities_data.items():
                 city_response = {
                     'total': 0,
                     'pocs': {}
                 }
 
-                # Inicializar totales por semana a nivel ciudad
-                for week_id in weeks_list:
-                    city_response[week_id] = 0
+                for period_id in periods_list:
+                    city_response[period_id] = 0
 
-                # Procesar cada POC en la ciudad
-                for poc_key, weeks_data in pocs_data.items():
+                for poc_key, periods_data in pocs_data.items():
                     poc_response = {
                         'total': 0
                     }
 
-                    # Agregar datos por semana para el POC
-                    for week_id in weeks_list:
-                        week_num = int(week_id[1:])  # Remover 'w'
+                    for period_id in periods_list:
+                        if dates_mode:
+                            # Clave directa por fecha 'YYYY-MM-DD'
+                            period_value = periods_data.get(period_id, Decimal('0'))
+                        else:
+                            # Clave (year, week) — buscar por número de semana
+                            week_num = int(period_id[1:])  # Remover 'w'
+                            period_value = Decimal('0')
+                            for (year, week), value in periods_data.items():
+                                if week == week_num:
+                                    period_value += value
 
-                        # Buscar el valor en weeks_data
-                        week_value = Decimal('0')
-                        for (year, week), value in weeks_data.items():
-                            if week == week_num:
-                                week_value += value
+                        poc_response[period_id] = round(float(period_value), 2)
+                        poc_response['total'] += period_value
 
-                        poc_response[week_id] = round(float(week_value), 2)
-                        poc_response['total'] += week_value
+                        city_response[period_id] += period_value
+                        city_response['total'] += period_value
 
-                        # Acumular en ciudad
-                        city_response[week_id] += week_value
-                        city_response['total'] += week_value
+                        sku_response[period_id] += period_value
+                        sku_response['total'] += period_value
 
-                        # Acumular en total del SKU
-                        sku_response[week_id] += week_value
-                        sku_response['total'] += week_value
-
-                    # Redondear total del POC
                     poc_response['total'] = round(
                         float(poc_response['total']), 2)
                     city_response['pocs'][poc_key] = poc_response
-                # Redondear totales de ciudad y convertir a float
+
                 city_response['total'] = round(
                     float(city_response['total']), 2)
-                for week_id in weeks_list:
-                    city_response[week_id] = round(
-                        float(city_response[week_id]), 2)
+                for period_id in periods_list:
+                    city_response[period_id] = round(
+                        float(city_response[period_id]), 2)
 
                 sku_response['cities'][city] = city_response
 
-            # Redondear totales del SKU
             sku_response['total'] = round(float(sku_response['total']), 2)
-            for week_id in weeks_list:
-                sku_response[week_id] = round(float(sku_response[week_id]), 2)
+            for period_id in periods_list:
+                sku_response[period_id] = round(float(sku_response[period_id]), 2)
 
             response['skus'][group_key] = sku_response
 
@@ -527,25 +547,29 @@ class SKUDetailByCityPOCWeeklyReportDownloadView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Generar información de semanas desde las fechas
-        weeks_info = self._generate_weeks_from_dates(
-            start_date_obj, end_date_obj)
+        # Modo por fechas individuales (dates=true) o por semanas ISO (default)
+        dates_mode = request.query_params.get('dates', 'false').strip().lower() == 'true'
 
-        if not weeks_info or not weeks_info['weeks_list']:
-            return Response(
-                {'error': 'No se pudieron generar semanas para el rango especificado'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        weeks_list = weeks_info['weeks_list']
-        year_week_pairs = weeks_info['year_week_pairs']
+        if dates_mode:
+            periods_list = self._generate_dates_list(start_date_obj, end_date_obj)
+            year_week_pairs = None
+        else:
+            weeks_info = self._generate_weeks_from_dates(start_date_obj, end_date_obj)
+            if not weeks_info or not weeks_info['weeks_list']:
+                return Response(
+                    {'error': 'No se pudieron generar semanas para el rango especificado'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            periods_list = weeks_info['weeks_list']
+            year_week_pairs = weeks_info['year_week_pairs']
 
         # Agrupar SKUs por nombre homologado
         sku_to_group, groups_info = _group_skus_by_homologated(sku_codes)
 
         # Obtener datos de ventas de los SKUs
         sales_data = self._get_sales_data(
-            sku_codes, year_week_pairs, report_type, sku_to_group
+            sku_codes, year_week_pairs, report_type, sku_to_group,
+            dates_mode=dates_mode, start_date=start_date_obj, end_date=end_date_obj
         )
 
         if not sales_data or not sales_data.get('skus'):
@@ -556,10 +580,10 @@ class SKUDetailByCityPOCWeeklyReportDownloadView(APIView):
 
         # Construir respuesta estructurada
         response_data = self._build_response(
-            sales_data, weeks_list, groups_info)
+            sales_data, periods_list, groups_info, dates_mode=dates_mode)
 
         # Crear DataFrame para Excel
-        df = self._build_excel_dataframe(response_data, weeks_list)
+        df = self._build_excel_dataframe(response_data, periods_list)
 
         # Crear log de la descarga
         try:
@@ -573,7 +597,8 @@ class SKUDetailByCityPOCWeeklyReportDownloadView(APIView):
                     'sku_codes': sku_codes,
                     'start_date': start_date_str,
                     'end_date': end_date_str,
-                    'report_type': report_type
+                    'report_type': report_type,
+                    'dates_mode': dates_mode
                 },
                 records_returned=len(df)
             )
@@ -637,15 +662,37 @@ class SKUDetailByCityPOCWeeklyReportDownloadView(APIView):
             'year_week_pairs': year_week_pairs
         }
 
-    def _get_sales_data(self, sku_codes, year_week_pairs, report_type='hectolitros', sku_to_group=None):
+    def _generate_dates_list(self, start_date, end_date):
+        """
+        Generar lista de fechas individuales en formato YYYY-MM-DD desde un rango.
+        Se usa cuando dates=true en el request.
+        """
+        dates = []
+        current = start_date
+        while current <= end_date:
+            dates.append(str(current))
+            current += timedelta(days=1)
+        return dates
+
+    def _get_sales_data(self, sku_codes, year_week_pairs, report_type='hectolitros', sku_to_group=None, dates_mode=False, start_date=None, end_date=None):
         """Obtener datos de ventas de uno o más SKUs."""
-        filters = Q(
-            deleted_at__isnull=True,
-            year__isnull=False,
-            week__isnull=False,
-            poc_city__isnull=False,
-            poc_id__isnull=False
-        )
+        # Construir filtro base
+        if dates_mode:
+            filters = Q(
+                deleted_at__isnull=True,
+                poc_city__isnull=False,
+                poc_id__isnull=False,
+                date__gte=start_date,
+                date__lte=end_date
+            )
+        else:
+            filters = Q(
+                deleted_at__isnull=True,
+                year__isnull=False,
+                week__isnull=False,
+                poc_city__isnull=False,
+                poc_id__isnull=False
+            )
 
         # Agregar filtro para SKUs (case-insensitive)
         sku_filter = Q()
@@ -663,21 +710,28 @@ class SKUDetailByCityPOCWeeklyReportDownloadView(APIView):
                 unidades_por_caja__gt=0  # Evitar división por cero
             )
 
-        year_week_filter = Q()
-        for year, week in year_week_pairs:
-            year_week_filter |= Q(year=year, week=week)
-        filters &= year_week_filter
+        if not dates_mode:
+            year_week_filter = Q()
+            for year, week in year_week_pairs:
+                year_week_filter |= Q(year=year, week=week)
+            filters &= year_week_filter
 
-        # Incluir sku_vtex en los campos de agrupación
-        grouping_fields = ['sku_vtex', 'poc_city', 'poc_id', 'poc_name',
-                           'name_homologated', 'name', 'year', 'week']
+        # Campos de agrupación según modo
+        if dates_mode:
+            grouping_fields = ['sku_vtex', 'poc_city', 'poc_id', 'poc_name',
+                               'name_homologated', 'name', 'date']
+            order_fields = ['sku_vtex', 'poc_city', 'poc_id', 'date']
+        else:
+            grouping_fields = ['sku_vtex', 'poc_city', 'poc_id', 'poc_name',
+                               'name_homologated', 'name', 'year', 'week']
+            order_fields = ['sku_vtex', 'poc_city', 'poc_id', 'year', 'week']
 
         if report_type == 'hectolitros':
             sales_queryset = SalesRecord.objects.filter(filters).values(
                 *grouping_fields
             ).annotate(
                 total_value=Sum('hectolitros')
-            ).order_by('sku_vtex', 'poc_city', 'poc_id', 'year', 'week')
+            ).order_by(*order_fields)
         else:
             sales_queryset = SalesRecord.objects.filter(filters).values(
                 *grouping_fields
@@ -689,7 +743,7 @@ class SKUDetailByCityPOCWeeklyReportDownloadView(APIView):
                         output_field=DecimalField()
                     )
                 )
-            ).order_by('sku_vtex', 'poc_city', 'poc_id', 'year', 'week')
+            ).order_by(*order_fields)
 
         # Estructura para múltiples SKUs
         data_structure = {
@@ -703,7 +757,6 @@ class SKUDetailByCityPOCWeeklyReportDownloadView(APIView):
             sku = item['sku_vtex']
             group_key = sku_to_group.get(sku, sku) if sku_to_group else sku
 
-            # Establecer nombre del producto si no existe
             if not data_structure['skus'][group_key]['product_name']:
                 data_structure['skus'][group_key]['product_name'] = item['name_homologated'] or item['name'] or 'Sin nombre'
 
@@ -711,17 +764,18 @@ class SKUDetailByCityPOCWeeklyReportDownloadView(APIView):
             poc_id = item['poc_id'] or 'Sin ID'
             poc_name = item['poc_name'] or 'Sin nombre'
             poc_key = f"{poc_id} - {poc_name}"
-            year = item['year']
-            week = item['week']
-            value = Decimal(str(item['total_value'])
-                            ) if item['total_value'] else Decimal('0')
+            value = Decimal(str(item['total_value'])) if item['total_value'] else Decimal('0')
 
-            data_structure['skus'][group_key]['cities'][city][poc_key][(
-                year, week)] += value
+            if dates_mode:
+                period_key = str(item['date'])
+            else:
+                period_key = (item['year'], item['week'])
+
+            data_structure['skus'][group_key]['cities'][city][poc_key][period_key] += value
 
         return data_structure
 
-    def _build_response(self, sales_data, weeks_list, groups_info=None):
+    def _build_response(self, sales_data, periods_list, groups_info=None, dates_mode=False):
         """Construir respuesta JSON estructurada para múltiples SKUs/grupos."""
         response = {'skus': {}}
         skus_data = sales_data.get('skus', {})
@@ -741,8 +795,8 @@ class SKUDetailByCityPOCWeeklyReportDownloadView(APIView):
                 'total': 0
             }
 
-            for week_id in weeks_list:
-                sku_response[week_id] = 0
+            for period_id in periods_list:
+                sku_response[period_id] = 0
 
             for city, pocs_data in cities_data.items():
                 city_response = {
@@ -750,25 +804,28 @@ class SKUDetailByCityPOCWeeklyReportDownloadView(APIView):
                     'pocs': {}
                 }
 
-                for week_id in weeks_list:
-                    city_response[week_id] = 0
+                for period_id in periods_list:
+                    city_response[period_id] = 0
 
-                for poc_key, weeks_data in pocs_data.items():
+                for poc_key, periods_data in pocs_data.items():
                     poc_response = {'total': 0}
 
-                    for week_id in weeks_list:
-                        week_num = int(week_id[1:])
-                        week_value = Decimal('0')
-                        for (year, week), value in weeks_data.items():
-                            if week == week_num:
-                                week_value += value
+                    for period_id in periods_list:
+                        if dates_mode:
+                            period_value = periods_data.get(period_id, Decimal('0'))
+                        else:
+                            week_num = int(period_id[1:])
+                            period_value = Decimal('0')
+                            for (year, week), value in periods_data.items():
+                                if week == week_num:
+                                    period_value += value
 
-                        poc_response[week_id] = round(float(week_value), 2)
-                        poc_response['total'] += week_value
-                        city_response[week_id] += week_value
-                        city_response['total'] += week_value
-                        sku_response[week_id] += week_value
-                        sku_response['total'] += week_value
+                        poc_response[period_id] = round(float(period_value), 2)
+                        poc_response['total'] += period_value
+                        city_response[period_id] += period_value
+                        city_response['total'] += period_value
+                        sku_response[period_id] += period_value
+                        sku_response['total'] += period_value
 
                     poc_response['total'] = round(
                         float(poc_response['total']), 2)
@@ -776,21 +833,21 @@ class SKUDetailByCityPOCWeeklyReportDownloadView(APIView):
 
                 city_response['total'] = round(
                     float(city_response['total']), 2)
-                for week_id in weeks_list:
-                    city_response[week_id] = round(
-                        float(city_response[week_id]), 2)
+                for period_id in periods_list:
+                    city_response[period_id] = round(
+                        float(city_response[period_id]), 2)
 
                 sku_response['cities'][city] = city_response
 
             sku_response['total'] = round(float(sku_response['total']), 2)
-            for week_id in weeks_list:
-                sku_response[week_id] = round(float(sku_response[week_id]), 2)
+            for period_id in periods_list:
+                sku_response[period_id] = round(float(sku_response[period_id]), 2)
 
             response['skus'][group_key] = sku_response
 
         return response
 
-    def _build_excel_dataframe(self, response_data, weeks_list):
+    def _build_excel_dataframe(self, response_data, periods_list):
         """Construir DataFrame para exportar a Excel."""
         rows = []
         skus_data = response_data.get('skus', {})
@@ -811,9 +868,9 @@ class SKUDetailByCityPOCWeeklyReportDownloadView(APIView):
                         'Total': poc_data.get('total', 0)
                     }
 
-                    # Agregar columnas de semanas
-                    for week_id in weeks_list:
-                        row[week_id.upper()] = poc_data.get(week_id, 0)
+                    # Agregar columnas de periodos (semanas o fechas)
+                    for period_id in periods_list:
+                        row[period_id.upper()] = poc_data.get(period_id, 0)
 
                     rows.append(row)
 
