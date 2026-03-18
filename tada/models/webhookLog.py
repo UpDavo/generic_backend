@@ -54,6 +54,12 @@ class WebhookLog(BaseModel):
         blank=True,
         help_text="Fecha y hora de la edición"
     )
+    numero_orden = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        help_text="Número de orden relacionado al webhook"
+    )
 
     def __str__(self):
         return f"Webhook log from {self.source or 'unknown'} on {self.date} at {self.time}"

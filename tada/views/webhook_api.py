@@ -121,6 +121,7 @@ class WebhookReceiverCancelledView(APIView):
                     'poc': log.poc,
                     'comment': log.comment,
                     'repurchased': log.repurchased,
+                    'numero_orden': log.numero_orden,
                     'is_edited': log.is_edited,
                     'edited_by': edited_by_name,
                     'edited_at': edited_at_gye
@@ -435,8 +436,8 @@ class WebhookCancelledDownloadView(APIView):
 
         # Cabeceras
         headers = ["ID", "Nombre", "Email", "Source",
-                   "Tipo de Evento", "Fecha", "Hora", "POC", "Comentario", 
-                   "Recompró", "Editado Por", "Fecha Edición"]
+                   "Tipo de Evento", "Fecha", "Hora", "POC", "Comentario",
+                   "Recompró", "Número de Orden", "Editado Por", "Fecha Edición"]
         ws.append(headers)
 
         # Configurar zona horaria de Guayaquil
@@ -471,6 +472,7 @@ class WebhookCancelledDownloadView(APIView):
                 log.poc or "",
                 log.comment or "",
                 "Sí" if log.repurchased else "No",
+                log.numero_orden or "",
                 edited_by_name,
                 edited_at_str
             ])
@@ -501,30 +503,24 @@ class WebhookCancelledUpdateView(APIView):
         - poc: Punto de venta de origen
         - comment: Comentario
         - repurchased: Booleano si volvió a comprar
+        - numero_orden: Número de orden relacionado
         """
         try:
             # Obtener el webhook
             webhook = WebhookLog.objects.get(pk=pk, deleted_at__isnull=True)
-            
-            # Verificar si ya fue editado
-            if webhook.is_edited:
-                return Response({
-                    "error": "Este webhook ya fue editado y no se puede modificar nuevamente",
-                    "edited_by": webhook.edited_by.email if webhook.edited_by else None,
-                    "edited_at": webhook.edited_at.isoformat() if webhook.edited_at else None
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
+
             # Obtener datos del request
             poc = request.data.get('poc')
             comment = request.data.get('comment')
             repurchased = request.data.get('repurchased')
-            
+            numero_orden = request.data.get('numero_orden')
+
             # Validar que al menos un campo esté presente
-            if poc is None and comment is None and repurchased is None:
+            if poc is None and comment is None and repurchased is None and numero_orden is None:
                 return Response({
-                    "error": "Debe proporcionar al menos un campo para actualizar (poc, comment, repurchased)"
+                    "error": "Debe proporcionar al menos un campo para actualizar (poc, comment, repurchased, numero_orden)"
                 }, status=status.HTTP_400_BAD_REQUEST)
-            
+
             # Actualizar campos
             if poc is not None:
                 webhook.poc = poc
@@ -532,6 +528,8 @@ class WebhookCancelledUpdateView(APIView):
                 webhook.comment = comment
             if repurchased is not None:
                 webhook.repurchased = repurchased
+            if numero_orden is not None:
+                webhook.numero_orden = numero_orden
             
             # Marcar como editado
             webhook.is_edited = True
@@ -563,6 +561,7 @@ class WebhookCancelledUpdateView(APIView):
                     "poc": webhook.poc,
                     "comment": webhook.comment,
                     "repurchased": webhook.repurchased,
+                    "numero_orden": webhook.numero_orden,
                     "is_edited": webhook.is_edited,
                     "edited_by": webhook.edited_by.email if webhook.edited_by else None,
                     "edited_at": edited_at_gye
