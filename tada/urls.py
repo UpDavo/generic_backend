@@ -264,6 +264,8 @@ urlpatterns = [
          name='report-send-email'),
     path('reports/fetch-data/', ReportFetchView.as_view(),
          name='report-fetch-data'),
+    path('reports/sales-by-date-range/', SalesByDateRangeView.as_view(),
+         name='sales-by-date-range'),
 
     # Webhook (receiver and stats)
     path('webhook/cancelled/', WebhookReceiverCancelledView.as_view(),

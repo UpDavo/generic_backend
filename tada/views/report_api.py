@@ -3,11 +3,12 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from django.utils.dateparse import parse_date
-from datetime import datetime
+from datetime import datetime, timedelta, time
 from tada.services.report_service import ReportService
-from tada.models import TrafficEvent, ExecutionLog
+from tada.models import TrafficEvent, ExecutionLog, SalesRecordQueryLog
 from tada.utils.constants import APPS, OPERATING_HOURS, DAY_NAMES
 from tada.services.command_service import execute_fetch_simple
+from tada.services.braze_service import BrazeService
 
 
 class DatetimeVariationReportView(APIView):
@@ -349,4 +350,127 @@ class ReportEmailView(APIView):
             return Response(
                 {'error': f'Error interno del servidor: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class SalesByDateRangeView(APIView):
+    """
+    Retorna ventas por hora agrupadas por día dado un rango de fechas.
+
+    Parámetros de query:
+    - start_date (requerido): Fecha de inicio en formato YYYY-MM-DD
+    - end_date (requerido): Fecha de fin en formato YYYY-MM-DD
+
+    Ejemplo:
+    - /tada/reports/sales-by-date-range/?start_date=2026-03-11&end_date=2026-03-18
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        start_date_str = request.query_params.get('start_date')
+        end_date_str = request.query_params.get('end_date')
+
+        if not start_date_str or not end_date_str:
+            return Response(
+                {'error': 'Los parámetros "start_date" y "end_date" son obligatorios'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        start_date = parse_date(start_date_str)
+        end_date = parse_date(end_date_str)
+
+        if start_date is None:
+            return Response(
+                {'error': 'El formato de "start_date" es inválido. Use YYYY-MM-DD'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        if end_date is None:
+            return Response(
+                {'error': 'El formato de "end_date" es inválido. Use YYYY-MM-DD'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        if start_date > end_date:
+            return Response(
+                {'error': '"start_date" no puede ser posterior a "end_date"'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            ending_at = min(
+                datetime.combine(end_date, time(23, 59, 59)),
+                datetime.now().replace(microsecond=0)
+            )
+            start_dt = datetime.combine(start_date, time(0, 0, 0))
+
+            event = TrafficEvent.objects.get(id=2)
+            braze = BrazeService()
+
+            # Braze limita length a 100 por llamada — paginar hacia atrás
+            all_entries = []
+            current_ending_at = ending_at
+            while current_ending_at > start_dt:
+                chunk_length = min(100, int((current_ending_at - start_dt).total_seconds() / 3600) + 1)
+                data, _ = braze.get_data_series(
+                    event_id=event.braze_id,
+                    length=chunk_length,
+                    ending_at=current_ending_at,
+                    unit='hour'
+                )
+                all_entries.extend(data.get('data', []))
+                current_ending_at -= timedelta(hours=100)
+
+            days_map = {}
+            for entry in all_entries:
+                ts = datetime.fromisoformat(entry['time']).replace(tzinfo=None)
+                date_part = ts.date()
+                if date_part < start_date or date_part > end_date:
+                    continue
+                count = entry.get('count', 0)
+                if count <= 0:
+                    continue
+                if date_part not in days_map:
+                    days_map[date_part] = []
+                days_map[date_part].append({'hora': ts.hour, 'ventas': count})
+
+            result = []
+            for date_part in sorted(days_map.keys()):
+                horas = sorted(days_map[date_part], key=lambda x: x['hora'])
+                result.append({
+                    'fecha': date_part.isoformat(),
+                    'dia': DAY_NAMES[date_part.isoweekday()],
+                    'numero': date_part.day,
+                    'ventas': horas,
+                })
+
+            try:
+                SalesRecordQueryLog.objects.create(
+                    query_type='list',
+                    records_returned=len(result),
+                    filters_applied={
+                        'start_date': start_date_str,
+                        'end_date': end_date_str,
+                        'report_type': 'sales_by_date_range'
+                    },
+                    date=datetime.now().date(),
+                    time=datetime.now().time(),
+                    app=str(APPS['SALES_CHECK']),
+                    user=request.user
+                )
+            except Exception as log_error:
+                print(f"No se pudo crear log de consulta: {log_error}")
+
+            return Response(result, status=status.HTTP_200_OK)
+
+        except TrafficEvent.DoesNotExist:
+            return Response(
+                {'error': 'No se encontró el evento de tráfico configurado'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        except Exception as e:
+            import traceback
+            print(f"ERROR sales-by-date-range: {str(e)}")
+            traceback.print_exc()
+            return Response(
+                {'error': f'Error al obtener datos de Braze: {str(e)}'},
+                status=status.HTTP_502_BAD_GATEWAY
             )
