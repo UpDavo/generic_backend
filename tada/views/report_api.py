@@ -3,12 +3,16 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from django.utils.dateparse import parse_date
+from django.utils import timezone as dj_timezone
 from datetime import datetime, timedelta, time
+import pytz
 from tada.services.report_service import ReportService
 from tada.models import TrafficEvent, ExecutionLog, SalesRecordQueryLog
 from tada.utils.constants import APPS, OPERATING_HOURS, DAY_NAMES
 from tada.services.command_service import execute_fetch_simple
 from tada.services.braze_service import BrazeService
+
+ECUADOR_TZ = pytz.timezone('America/Guayaquil')
 
 
 class DatetimeVariationReportView(APIView):
@@ -396,11 +400,10 @@ class SalesByDateRangeView(APIView):
             )
 
         try:
-            ending_at = min(
-                datetime.combine(end_date, time(23, 59, 59)),
-                datetime.now().replace(microsecond=0)
-            )
-            start_dt = datetime.combine(start_date, time(0, 0, 0))
+            end_local = ECUADOR_TZ.localize(datetime.combine(end_date, time(23, 59, 59)))
+            start_local = ECUADOR_TZ.localize(datetime.combine(start_date, time(0, 0, 0)))
+            ending_at = min(end_local.astimezone(pytz.utc), dj_timezone.now())
+            start_dt = start_local.astimezone(pytz.utc)
 
             event = TrafficEvent.objects.get(id=2)
             braze = BrazeService()
@@ -421,8 +424,11 @@ class SalesByDateRangeView(APIView):
 
             days_map = {}
             for entry in all_entries:
-                ts = datetime.fromisoformat(entry['time']).replace(tzinfo=None)
-                date_part = ts.date()
+                ts_aware = datetime.fromisoformat(entry['time'])
+                if ts_aware.tzinfo is None:
+                    ts_aware = ts_aware.replace(tzinfo=pytz.utc)
+                ts_local = ts_aware.astimezone(ECUADOR_TZ)
+                date_part = ts_local.date()
                 if date_part < start_date or date_part > end_date:
                     continue
                 count = entry.get('count', 0)
@@ -430,7 +436,7 @@ class SalesByDateRangeView(APIView):
                     continue
                 if date_part not in days_map:
                     days_map[date_part] = []
-                days_map[date_part].append({'hora': ts.hour, 'ventas': count})
+                days_map[date_part].append({'hora': ts_local.hour, 'ventas': count})
 
             result = []
             for date_part in sorted(days_map.keys()):
