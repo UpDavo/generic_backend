@@ -34,7 +34,7 @@ APPS = {
 STORE_TIMES = []
 
 # Configuración de ventana de tiempo para registros
-START_WINDOW = 57
+START_WINDOW = 50
 END_WINDOW = 12
 
 # Horarios de operación por día de la semana

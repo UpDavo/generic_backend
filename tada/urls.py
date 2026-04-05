@@ -170,6 +170,10 @@ urlpatterns = [
     # Sales Report Processor OPTIMIZADO (bajo consumo de RAM)
     path('sales-report/process-optimized/', OptimizedSalesReportProcessorView.as_view(),
          name='sales-report-process-optimized'),
+
+    # Inventario Teórico — cobertura de garantía por POC
+    path('teoric-inventory/process/', TeoricInventoryProcessorView.as_view(),
+         name='teoric-inventory-process'),
     
     
     #Descargar y listar historico de procesamientos

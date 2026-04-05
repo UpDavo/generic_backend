@@ -36,7 +36,7 @@ import unicodedata
 from openpyxl import load_workbook
 
 from tada.models import (
-    SalesReportLog, SalesRecord, Price, AppPrice, POC, 
+    SalesReportLog, SalesRecord, Price, AppPrice, POC,
     VentasProductosApp, VentasProductosCompra, SalesUploadLog,
     SalesFileStorage, SalesFileRowHash
 )
@@ -46,10 +46,10 @@ from tada.utils.constants import APPS
 def sanitize_filename(filename, date_start=None, date_end=None):
     """
     Sanitiza y normaliza el nombre del archivo para S3.
-    
+
     Si se proporcionan fechas, genera nombre basado en rango:
     - ventas_2026-02-01_2026-02-04.xlsx
-    
+
     Si no, usa el nombre original sanitizado con timestamp.
     """
     # Obtener extensión
@@ -58,37 +58,37 @@ def sanitize_filename(filename, date_start=None, date_end=None):
         ext = f'.{ext}'
     else:
         ext = '.xlsx'
-    
+
     # Si tenemos rango de fechas, usar nombre normalizado
     if date_start and date_end:
         return f"ventas_{date_start}_{date_end}{ext}"
-    
+
     # Fallback: nombre original sanitizado
     if '.' in filename:
         name, _ = filename.rsplit('.', 1)
     else:
         name = filename
-    
+
     # Normalizar unicode (quitar acentos)
     name = unicodedata.normalize('NFKD', name)
     name = name.encode('ASCII', 'ignore').decode('ASCII')
-    
+
     # Reemplazar espacios con guiones bajos
     name = name.replace(' ', '_')
-    
+
     # Remover caracteres especiales
     name = re.sub(r'[^a-zA-Z0-9_\-]', '', name)
-    
+
     # Agregar timestamp para unicidad
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    
+
     return f"{name}_{timestamp}{ext}"
 
 
 class OptimizedSalesReportProcessorView(APIView):
     """
     Vista optimizada para procesar archivos Excel con datos de ventas.
-    
+
     Optimizaciones clave:
     - Lectura en streaming: No carga el archivo completo en memoria
     - Procesamiento por lotes: Usa buffers de 1000 registros
@@ -96,49 +96,51 @@ class OptimizedSalesReportProcessorView(APIView):
     - Garbage collection: Libera memoria activamente
     """
     permission_classes = [IsAuthenticated]
-    
+
     # Configuración de batch sizes
     BATCH_SIZE = 1000  # Registros por lote para bulk_create
     PROGRESS_LOG_INTERVAL = 500  # Cada cuántas filas loguear progreso
     MAX_ROWS_LIMIT = 300000  # Límite máximo de filas
     ROW_HASH_BATCH_SIZE = 5000  # Batch para guardar hashes de filas
-    
+
     # Palabras clave que indican filas de resumen/filtros a excluir (Google Sheets)
-    EXCLUDE_KEYWORDS = {'total', 'applied filters', 'filtros aplicados', 'subtotal', 'grand total'}
+    EXCLUDE_KEYWORDS = {'total', 'applied filters',
+                        'filtros aplicados', 'subtotal', 'grand total'}
 
     def _is_excluded_row(self, first_cell_value):
         """
         Verificar si una fila debe ser excluida (resumen, filtros, etc.)
-        
+
         Args:
             first_cell_value: Valor de la primera celda de la fila
-            
+
         Returns:
             bool: True si la fila debe excluirse
         """
         if first_cell_value is None:
             return True
-            
+
         first_cell_str = str(first_cell_value).lower().strip()
-        
+
         # Verificar keywords de exclusión
         if any(keyword in first_cell_str for keyword in self.EXCLUDE_KEYWORDS):
             return True
-        
+
         # Verificar si es un año válido (columna A debería tener el año)
         try:
-            year_val = int(first_cell_value) if not isinstance(first_cell_value, int) else first_cell_value
+            year_val = int(first_cell_value) if not isinstance(
+                first_cell_value, int) else first_cell_value
             if not (2020 <= year_val <= 2030):
                 return True
         except (ValueError, TypeError):
             return True
-            
+
         return False
 
     def post(self, request):
         """
         Procesar un archivo Excel con ventas usando comparación inteligente.
-        
+
         Flujo:
         1. Calcular hash del archivo
         2. Si el archivo es idéntico al anterior -> Skip completo
@@ -163,18 +165,20 @@ class OptimizedSalesReportProcessorView(APIView):
 
         try:
             start_time = time.time()
-            
+
             if settings.DEBUG:
-                print(f"\n🚀 [OPTIMIZADO v2] Iniciando procesamiento de '{excel_file.name}'...")
+                print(
+                    f"\n🚀 [OPTIMIZADO v2] Iniciando procesamiento de '{excel_file.name}'...")
 
             # === FASE 1: Leer contenido y calcular hash ===
             excel_file.seek(0)
             file_content = excel_file.read()
             file_hash = hashlib.sha256(file_content).hexdigest()
             file_size = len(file_content)
-            
+
             if settings.DEBUG:
-                print(f"📁 Archivo: {excel_file.name} ({file_size/1024:.1f} KB)")
+                print(
+                    f"📁 Archivo: {excel_file.name} ({file_size/1024:.1f} KB)")
                 print(f"🔑 Hash: {file_hash[:16]}...")
 
             # === FASE 2: Verificar si el archivo ya fue procesado ===
@@ -183,10 +187,11 @@ class OptimizedSalesReportProcessorView(APIView):
                 processed=True,
                 deleted_at__isnull=True
             ).first()
-            
+
             if existing_file:
                 if settings.DEBUG:
-                    print(f"⚠️ Archivo idéntico ya procesado el {existing_file.processed_at}")
+                    print(
+                        f"⚠️ Archivo idéntico ya procesado el {existing_file.processed_at}")
                 return Response({
                     'message': 'Este archivo ya fue procesado anteriormente',
                     'previous_processing': {
@@ -202,50 +207,54 @@ class OptimizedSalesReportProcessorView(APIView):
                 processed=True,
                 deleted_at__isnull=True
             ).exclude(file_hash=file_hash).order_by('-created_at').first()
-            
+
             if settings.DEBUG:
                 if previous_file:
-                    print(f"📂 Archivo anterior encontrado: {previous_file.filename} ({previous_file.total_rows} filas)")
+                    print(
+                        f"📂 Archivo anterior encontrado: {previous_file.filename} ({previous_file.total_rows} filas)")
                 else:
                     print("📂 No hay archivo anterior para comparar (primera carga)")
 
             # === FASE 4: Pre-cargar lookups ===
             if settings.DEBUG:
                 print("📦 Cargando lookups de POC y productos...")
-            
+
             poc_lookup = self._build_poc_lookup()
             product_app_lookup, product_compra_lookup = self._build_product_lookups()
-            
+
             if settings.DEBUG:
                 print(f"   ✓ {len(poc_lookup)} POCs cargados")
                 print(f"   ✓ {len(product_app_lookup)} productos app cargados")
-                print(f"   ✓ {len(product_compra_lookup)} productos compra cargados")
+                print(
+                    f"   ✓ {len(product_compra_lookup)} productos compra cargados")
 
             # === FASE 5: Contar filas del archivo ===
-            # Usar read_only=False para archivos de Google Sheets 
+            # Usar read_only=False para archivos de Google Sheets
             # (no definen dimensiones correctamente con read_only=True)
-            wb_count = load_workbook(BytesIO(file_content), read_only=False, data_only=True)
+            wb_count = load_workbook(
+                BytesIO(file_content), read_only=False, data_only=True)
             ws_count = wb_count.active
-            
+
             # Contar filas válidas (excluyendo resúmenes y filtros de Google Sheets)
             total_rows = 0
             for row in ws_count.iter_rows(min_row=2, values_only=True):
                 first_cell = row[0] if row else None
-                
+
                 if self._is_excluded_row(first_cell):
                     if first_cell is not None:
                         # Es una fila de resumen/filtro, no vacía
                         if settings.DEBUG:
-                            print(f"   ⚠️ Fila excluida (resumen/filtro): '{str(first_cell)[:50]}...'")
+                            print(
+                                f"   ⚠️ Fila excluida (resumen/filtro): '{str(first_cell)[:50]}...'")
                         break
                     continue
-                
+
                 total_rows += 1
-            
+
             wb_count.close()
             del wb_count
             gc.collect()
-            
+
             if total_rows <= 0:
                 return Response(
                     {'error': 'El archivo Excel está vacío o no tiene datos válidos'},
@@ -276,14 +285,15 @@ class OptimizedSalesReportProcessorView(APIView):
             dates_in_file = self._prescan_dates(file_content)
             date_start = min(dates_in_file) if dates_in_file else None
             date_end = max(dates_in_file) if dates_in_file else None
-            
+
             # Generar nombre normalizado basado en rango de fechas
-            safe_filename = sanitize_filename(excel_file.name, date_start, date_end)
-            
+            safe_filename = sanitize_filename(
+                excel_file.name, date_start, date_end)
+
             if settings.DEBUG:
                 print(f"📅 Rango de fechas: {date_start} a {date_end}")
                 print(f"📁 Nombre normalizado: {safe_filename}")
-            
+
             # === FASE 8: Crear registro del archivo ===
             sales_file = SalesFileStorage.objects.create(
                 filename=excel_file.name,  # Guardar nombre original
@@ -294,7 +304,7 @@ class OptimizedSalesReportProcessorView(APIView):
                 user=request.user,
                 previous_file=previous_file
             )
-            
+
             # Guardar el archivo físico con nombre normalizado
             try:
                 sales_file.file.save(
@@ -315,12 +325,12 @@ class OptimizedSalesReportProcessorView(APIView):
             if previous_file:
                 if settings.DEBUG:
                     print("🔍 Cargando hashes del archivo anterior...")
-                
+
                 for row_hash in SalesFileRowHash.objects.filter(
                     sales_file=previous_file
                 ).values_list('row_key', 'row_hash'):
                     previous_row_hashes[row_hash[0]] = row_hash[1]
-                
+
                 if settings.DEBUG:
                     print(f"   ✓ {len(previous_row_hashes)} hashes cargados")
 
@@ -362,25 +372,30 @@ class OptimizedSalesReportProcessorView(APIView):
                     # Eliminar archivo físico de S3
                     if previous_file.file:
                         previous_file.delete_file()
-                    
+
                     # Eliminar hashes del archivo anterior
-                    SalesFileRowHash.objects.filter(sales_file=previous_file).delete()
-                    
+                    SalesFileRowHash.objects.filter(
+                        sales_file=previous_file).delete()
+
                     # Soft delete del registro
                     previous_file.deleted_at = now()
                     previous_file.save(update_fields=['deleted_at'])
-                    
+
                     if settings.DEBUG:
-                        print(f"🗑️ Archivo anterior eliminado: {previous_file.filename}")
+                        print(
+                            f"🗑️ Archivo anterior eliminado: {previous_file.filename}")
                 except Exception as e:
                     if settings.DEBUG:
-                        print(f"⚠️ Error al eliminar archivo anterior: {str(e)}")
+                        print(
+                            f"⚠️ Error al eliminar archivo anterior: {str(e)}")
 
             if settings.DEBUG:
-                print(f"\n✅ Procesamiento completado en {processing_duration}s")
+                print(
+                    f"\n✅ Procesamiento completado en {processing_duration}s")
                 print(f"   📊 Nuevos: {result['saved_count']}")
                 print(f"   🔄 Actualizados: {result['updated_count']}")
-                print(f"   ⚠️  Duplicados (sin cambios): {result['duplicates_count']}")
+                print(
+                    f"   ⚠️  Duplicados (sin cambios): {result['duplicates_count']}")
                 print(f"   🗑️  Eliminados: {result.get('deleted_count', 0)}")
                 print(f"   ❌ Errores: {len(result['unprocessed_rows'])}")
 
@@ -397,7 +412,8 @@ class OptimizedSalesReportProcessorView(APIView):
 
             # Headers adicionales con info de comparación
             response['X-File-Hash'] = file_hash[:16]
-            response['X-Previous-File'] = str(previous_file.id) if previous_file else 'none'
+            response['X-Previous-File'] = str(
+                previous_file.id) if previous_file else 'none'
             response['X-Records-Deleted'] = str(result.get('deleted_count', 0))
 
             # Limpieza
@@ -418,7 +434,7 @@ class OptimizedSalesReportProcessorView(APIView):
     def _build_poc_lookup(self):
         """Construir diccionario de búsqueda de POCs."""
         poc_lookup = {}
-        
+
         for poc in POC.objects.filter(deleted_at__isnull=True).only(
             'id_poc', 'name', 'city', 'region', 'homologated_names'
         ):
@@ -430,12 +446,12 @@ class OptimizedSalesReportProcessorView(APIView):
                 'poc_region': poc.region
             }
             poc_lookup[key] = poc_data
-            
+
             # Agregar nombres homologados
             if poc.homologated_names:
                 for homologated_name in poc.homologated_names:
                     poc_lookup[homologated_name.lower().strip()] = poc_data
-        
+
         return poc_lookup
 
     def _build_product_lookups(self):
@@ -456,8 +472,8 @@ class OptimizedSalesReportProcessorView(APIView):
         for p in VentasProductosCompra.objects.filter(
             deleted_at__isnull=True
         ).only(
-            'code', 'name', 'homologated_names', 'category', 'brand', 
-            'returnable', 'mililiters_per_unit', 'hectoliter_per_unit', 
+            'code', 'name', 'homologated_names', 'category', 'brand',
+            'returnable', 'mililiters_per_unit', 'hectoliter_per_unit',
             'cost_per_unit', 'box_units'
         ):
             product_compra_lookup[str(p.code)] = {
@@ -475,11 +491,11 @@ class OptimizedSalesReportProcessorView(APIView):
 
         return product_app_lookup, product_compra_lookup
 
-    def _process_excel_streaming(self, excel_file, poc_lookup, product_app_lookup, 
-                                  product_compra_lookup, sales_log, user, total_rows):
+    def _process_excel_streaming(self, excel_file, poc_lookup, product_app_lookup,
+                                 product_compra_lookup, sales_log, user, total_rows):
         """
         Procesar Excel usando streaming y batches para minimizar RAM.
-        
+
         Lógica de duplicados mejorada:
         1. Pre-scan para obtener fechas del archivo
         2. Cargar solo registros existentes de esas fechas
@@ -491,27 +507,29 @@ class OptimizedSalesReportProcessorView(APIView):
         # === FASE 1: Pre-scan para obtener fechas únicas del archivo ===
         if settings.DEBUG:
             print("📅 Pre-escaneando fechas del archivo...")
-        
+
         file_content = excel_file.read()
         excel_file.seek(0)
-        
+
         dates_in_file = self._prescan_dates(file_content)
-        
+
         if settings.DEBUG:
             print(f"   ✓ Fechas encontradas: {len(dates_in_file)} días únicos")
             if dates_in_file:
-                print(f"   ✓ Rango: {min(dates_in_file)} a {max(dates_in_file)}")
-        
+                print(
+                    f"   ✓ Rango: {min(dates_in_file)} a {max(dates_in_file)}")
+
         # === FASE 2: Cargar registros existentes solo de esas fechas ===
         existing_records = self._get_existing_records_lookup(dates_in_file)
-        
+
         if settings.DEBUG:
-            print(f"📦 {len(existing_records)} registros existentes en BD para esas fechas")
-        
+            print(
+                f"📦 {len(existing_records)} registros existentes en BD para esas fechas")
+
         # === FASE 3: Procesar archivo ===
         wb = load_workbook(
-            BytesIO(file_content), 
-            read_only=True, 
+            BytesIO(file_content),
+            read_only=True,
             data_only=True
         )
         ws = wb.active
@@ -519,7 +537,7 @@ class OptimizedSalesReportProcessorView(APIView):
         headers = None
         required_columns = [
             'Date Hierarchy - Date',
-            'STORE_NAME', 
+            'STORE_NAME',
             'product_spk',
             '# Units',
             '# Orders'
@@ -530,10 +548,10 @@ class OptimizedSalesReportProcessorView(APIView):
         records_to_update = []  # IDs y datos para actualizar
         unprocessed_rows = []  # Errores
         new_records_for_excel = []  # Para el Excel de respuesta
-        
+
         # Set para evitar duplicados dentro del mismo archivo
         processed_keys_in_file = set()
-        
+
         # Contadores
         saved_count = 0
         updated_count = 0
@@ -545,13 +563,14 @@ class OptimizedSalesReportProcessorView(APIView):
         for row_idx, row in enumerate(ws.iter_rows(values_only=True)):
             if row_idx == 0:
                 headers = list(row)
-                
+
                 missing = [c for c in required_columns if c not in headers]
                 if missing:
                     wb.close()
                     raise ValueError(f"Faltan columnas: {', '.join(missing)}")
-                
-                col_indices = {col: headers.index(col) for col in required_columns}
+
+                col_indices = {col: headers.index(
+                    col) for col in required_columns}
                 continue
 
             try:
@@ -616,10 +635,12 @@ class OptimizedSalesReportProcessorView(APIView):
                 if isinstance(date_val, datetime):
                     date_obj = date_val.date()
                 else:
-                    date_obj = datetime.strptime(str(date_val), '%Y-%m-%d').date()
+                    date_obj = datetime.strptime(
+                        str(date_val), '%Y-%m-%d').date()
             except (ValueError, TypeError):
                 try:
-                    date_obj = datetime.strptime(str(date_val), '%d/%m/%Y').date()
+                    date_obj = datetime.strptime(
+                        str(date_val), '%d/%m/%Y').date()
                 except:
                     unprocessed_rows.append({
                         'Date Hierarchy - Date': date_val,
@@ -635,45 +656,47 @@ class OptimizedSalesReportProcessorView(APIView):
             for material_obj, quantity in materials.items():
                 material_code = str(material_obj.code)
                 material = product_compra_lookup.get(material_code)
-                
+
                 if not material:
                     continue
 
                 # Calcular métricas
                 quantity_float = float(quantity)
                 units_adjusted = int(units) * quantity_float
-                
+
                 hectoliter = material['hectoliter_per_unit']
                 cost = material['cost_per_unit']
                 box_units_value = material['box_units']
-                
+
                 venta_unitaria = units_adjusted * cost if cost else None
-                venta_pack = units_adjusted / box_units_value if box_units_value and box_units_value > 0 else None
+                venta_pack = units_adjusted / \
+                    box_units_value if box_units_value and box_units_value > 0 else None
                 hectolitros_sold = hectoliter * units_adjusted if hectoliter else None
 
                 # Crear clave única normalizada (todo upper)
                 store_name_upper = str(store_name).upper()
                 sku_upper = sku.upper()
                 material_code_upper = material_code.upper()
-                
+
                 record_key = f"{date_obj}|{store_name_upper}|{sku_upper}|{material_code_upper}"
-                
+
                 # === VERIFICAR DUPLICADOS DENTRO DEL MISMO ARCHIVO ===
                 if record_key in processed_keys_in_file:
                     skipped_internal_duplicates += 1
                     continue
-                
+
                 processed_keys_in_file.add(record_key)
-                
+
                 # === VERIFICAR CONTRA BASE DE DATOS ===
                 existing_record = existing_records.get(record_key)
-                
+
                 if existing_record:
                     # Comparar valores (con tolerancia para decimales)
                     existing_units = existing_record['units']
                     existing_hl = existing_record['hectolitros']
-                    new_hl = round(hectolitros_sold, 4) if hectolitros_sold else 0
-                    
+                    new_hl = round(hectolitros_sold,
+                                   4) if hectolitros_sold else 0
+
                     if existing_units == int(units) and abs(existing_hl - new_hl) < 0.0001:
                         # Duplicado exacto - SKIP
                         duplicates_count += 1
@@ -706,24 +729,33 @@ class OptimizedSalesReportProcessorView(APIView):
                     poc_id=poc_data['poc_id'],
                     poc_name=str(poc_data['poc_name']).upper(),
                     poc_homolo=store_name_upper if store_name != poc_data['poc_name'] else None,
-                    poc_city=str(poc_data['poc_city']).upper() if poc_data['poc_city'] else None,
-                    poc_region=str(poc_data['poc_region']).upper() if poc_data['poc_region'] else None,
+                    poc_city=str(poc_data['poc_city']).upper(
+                    ) if poc_data['poc_city'] else None,
+                    poc_region=str(poc_data['poc_region']).upper(
+                    ) if poc_data['poc_region'] else None,
                     sku_padre=sku_upper,
                     nombre_padre=str(product_app['name']).upper(),
                     orders=int(orders),
                     units=int(units),
                     name=str(material['name']).upper(),
-                    name_homologated=str(material['name_homologated']).upper() if material['name_homologated'] else None,
-                    category=str(material['category']).upper() if material['category'] else None,
-                    brand=str(material['brand']).upper() if material['brand'] else None,
+                    name_homologated=str(material['name_homologated']).upper(
+                    ) if material['name_homologated'] else None,
+                    category=str(material['category']).upper(
+                    ) if material['category'] else None,
+                    brand=str(material['brand']).upper(
+                    ) if material['brand'] else None,
                     retornable=material['returnable'],
                     units_assigned=Decimal(str(quantity_float)),
                     units_per_sku=Decimal(str(units_adjusted)),
                     unidades_por_caja=box_units_value,
-                    venta_pack=Decimal(str(venta_pack)) if venta_pack else None,
-                    mililitros=Decimal(str(material['mililiters_per_unit'])) if material['mililiters_per_unit'] else None,
-                    hectolitros=Decimal(str(hectolitros_sold)) if hectolitros_sold else None,
-                    dolars=Decimal(str(venta_unitaria)) if venta_unitaria else None,
+                    venta_pack=Decimal(
+                        str(venta_pack)) if venta_pack else None,
+                    mililitros=Decimal(str(
+                        material['mililiters_per_unit'])) if material['mililiters_per_unit'] else None,
+                    hectolitros=Decimal(
+                        str(hectolitros_sold)) if hectolitros_sold else None,
+                    dolars=Decimal(str(venta_unitaria)
+                                   ) if venta_unitaria else None,
                     week=date_data['week'],
                     year=date_data['year'],
                     month=date_data['month'],
@@ -733,7 +765,7 @@ class OptimizedSalesReportProcessorView(APIView):
                 )
 
                 records_buffer.append(record)
-                
+
                 # Guardar datos para Excel de respuesta
                 new_records_for_excel.append({
                     'date': str(date_obj),
@@ -763,18 +795,21 @@ class OptimizedSalesReportProcessorView(APIView):
 
                 # Flush buffer cuando alcance el tamaño del batch
                 if len(records_buffer) >= self.BATCH_SIZE:
-                    SalesRecord.objects.bulk_create(records_buffer, batch_size=500)
+                    SalesRecord.objects.bulk_create(
+                        records_buffer, batch_size=500)
                     saved_count += len(records_buffer)
-                    
+
                     if settings.DEBUG:
-                        print(f"   💾 Batch guardado: {saved_count} registros nuevos")
-                    
+                        print(
+                            f"   💾 Batch guardado: {saved_count} registros nuevos")
+
                     records_buffer.clear()
                     gc.collect()
 
             # Log de progreso
             if settings.DEBUG and processed_rows % self.PROGRESS_LOG_INTERVAL == 0:
-                print(f"   ⏳ Procesado: {processed_rows}/{total_rows} filas ({int(processed_rows/total_rows*100)}%)")
+                print(
+                    f"   ⏳ Procesado: {processed_rows}/{total_rows} filas ({int(processed_rows/total_rows*100)}%)")
 
         # Guardar registros restantes en el buffer
         if records_buffer:
@@ -794,7 +829,8 @@ class OptimizedSalesReportProcessorView(APIView):
         gc.collect()
 
         if settings.DEBUG and skipped_internal_duplicates > 0:
-            print(f"   ⚠️ Duplicados internos del archivo saltados: {skipped_internal_duplicates}")
+            print(
+                f"   ⚠️ Duplicados internos del archivo saltados: {skipped_internal_duplicates}")
 
         return {
             'saved_count': saved_count,
@@ -811,13 +847,14 @@ class OptimizedSalesReportProcessorView(APIView):
         Excluye filas de resumen/filtros de Google Sheets.
         """
         dates = set()
-        
-        wb = load_workbook(BytesIO(file_content), read_only=False, data_only=True)
+
+        wb = load_workbook(BytesIO(file_content),
+                           read_only=False, data_only=True)
         ws = wb.active
-        
+
         date_col_idx = None
         year_col_idx = 0  # Columna A es el año
-        
+
         for row_idx, row in enumerate(ws.iter_rows(values_only=True)):
             if row_idx == 0:
                 # Buscar columna de fecha
@@ -825,17 +862,17 @@ class OptimizedSalesReportProcessorView(APIView):
                 if 'Date Hierarchy - Date' in headers:
                     date_col_idx = headers.index('Date Hierarchy - Date')
                 continue
-            
+
             if date_col_idx is None:
                 break
-            
+
             # Verificar si es fila de resumen/filtro
             first_cell = row[year_col_idx] if row else None
             if self._is_excluded_row(first_cell):
                 if first_cell is not None:
                     break  # Fila de resumen, terminar
                 continue  # Fila vacía, seguir
-                
+
             try:
                 date_val = row[date_col_idx]
                 if date_val:
@@ -843,19 +880,22 @@ class OptimizedSalesReportProcessorView(APIView):
                         dates.add(date_val.date())
                     else:
                         try:
-                            dates.add(datetime.strptime(str(date_val), '%Y-%m-%d').date())
+                            dates.add(datetime.strptime(
+                                str(date_val), '%Y-%m-%d').date())
                         except:
                             try:
-                                dates.add(datetime.strptime(str(date_val), '%d/%m/%Y').date())
+                                dates.add(datetime.strptime(
+                                    str(date_val), '%d/%m/%Y').date())
                             except:
                                 # Intentar formato M/D/YY (Google Sheets)
                                 try:
-                                    dates.add(datetime.strptime(str(date_val), '%m/%d/%y').date())
+                                    dates.add(datetime.strptime(
+                                        str(date_val), '%m/%d/%y').date())
                                 except:
                                     pass
             except:
                 pass
-        
+
         wb.close()
         return dates
 
@@ -878,11 +918,11 @@ class OptimizedSalesReportProcessorView(APIView):
             )
 
     def _process_excel_with_comparison(self, file_content, poc_lookup, product_app_lookup,
-                                        product_compra_lookup, sales_log, sales_file, user,
-                                        total_rows, previous_row_hashes, previous_file):
+                                       product_compra_lookup, sales_log, sales_file, user,
+                                       total_rows, previous_row_hashes, previous_file):
         """
         Procesar Excel comparando con archivo anterior.
-        
+
         Lógica:
         1. Para cada fila del nuevo archivo, calcular su hash
         2. Si el hash existe en el archivo anterior -> SKIP (sin cambios)
@@ -893,13 +933,14 @@ class OptimizedSalesReportProcessorView(APIView):
            pero NO están en el nuevo archivo
         5. Guardar hashes del nuevo archivo para futuras comparaciones
         """
-        wb = load_workbook(BytesIO(file_content), read_only=True, data_only=True)
+        wb = load_workbook(BytesIO(file_content),
+                           read_only=True, data_only=True)
         ws = wb.active
 
         headers = None
         required_columns = [
             'Date Hierarchy - Date',
-            'STORE_NAME', 
+            'STORE_NAME',
             'product_spk',
             '# Units',
             '# Orders'
@@ -911,18 +952,18 @@ class OptimizedSalesReportProcessorView(APIView):
         row_hashes_buffer = []
         unprocessed_rows = []
         new_records_for_excel = []
-        
+
         # Set de claves del nuevo archivo (para detectar eliminaciones)
         new_file_keys = set()
-        
+
         # Tracking de fechas y estadísticas
         all_dates = set()
         all_stores = set()
         all_skus = set()
-        
+
         # Set para evitar duplicados internos
         processed_keys_in_file = set()
-        
+
         # Contadores
         saved_count = 0
         updated_count = 0
@@ -933,10 +974,10 @@ class OptimizedSalesReportProcessorView(APIView):
         # Cargar registros existentes de BD para comparación
         if settings.DEBUG:
             print("🔍 Pre-escaneando fechas del archivo...")
-        
+
         dates_in_file = self._prescan_dates(file_content)
         existing_records = self._get_existing_records_lookup(dates_in_file)
-        
+
         if settings.DEBUG:
             print(f"   ✓ {len(dates_in_file)} días únicos")
             print(f"   ✓ {len(existing_records)} registros existentes en BD")
@@ -950,7 +991,8 @@ class OptimizedSalesReportProcessorView(APIView):
                 if missing:
                     wb.close()
                     raise ValueError(f"Faltan columnas: {', '.join(missing)}")
-                col_indices = {col: headers.index(col) for col in required_columns}
+                col_indices = {col: headers.index(
+                    col) for col in required_columns}
                 continue
 
             # Verificar si es fila de resumen/filtro (Google Sheets)
@@ -958,7 +1000,8 @@ class OptimizedSalesReportProcessorView(APIView):
             if self._is_excluded_row(first_cell):
                 if first_cell is not None:
                     if settings.DEBUG:
-                        print(f"   ⚠️ Terminando procesamiento - fila de resumen detectada")
+                        print(
+                            f"   ⚠️ Terminando procesamiento - fila de resumen detectada")
                     break  # Fila de resumen, terminar
                 continue  # Fila vacía, seguir
 
@@ -1026,7 +1069,7 @@ class OptimizedSalesReportProcessorView(APIView):
                 else:
                     date_str = str(date_val).strip()
                     date_obj = None
-                    
+
                     # Intentar diferentes formatos
                     date_formats = [
                         '%Y-%m-%d',     # 2026-02-03
@@ -1035,17 +1078,17 @@ class OptimizedSalesReportProcessorView(APIView):
                         '%d/%m/%y',     # 3/2/26 (Google Sheets ES)
                         '%m/%d/%Y',     # 2/3/2026
                     ]
-                    
+
                     for fmt in date_formats:
                         try:
                             date_obj = datetime.strptime(date_str, fmt).date()
                             break
                         except ValueError:
                             continue
-                    
+
                     if date_obj is None:
                         raise ValueError(f"No se pudo parsear: {date_str}")
-                        
+
             except Exception as e:
                 unprocessed_rows.append({
                     'Date Hierarchy - Date': date_val,
@@ -1064,7 +1107,7 @@ class OptimizedSalesReportProcessorView(APIView):
             for material_obj, quantity in materials.items():
                 material_code = str(material_obj.code)
                 material = product_compra_lookup.get(material_code)
-                
+
                 if not material:
                     continue
 
@@ -1073,25 +1116,27 @@ class OptimizedSalesReportProcessorView(APIView):
                 # Calcular métricas
                 quantity_float = float(quantity)
                 units_adjusted = int(units) * quantity_float
-                
+
                 hectoliter = material['hectoliter_per_unit']
                 cost = material['cost_per_unit']
                 box_units_value = material['box_units']
-                
+
                 venta_unitaria = units_adjusted * cost if cost else None
-                venta_pack = units_adjusted / box_units_value if box_units_value and box_units_value > 0 else None
+                venta_pack = units_adjusted / \
+                    box_units_value if box_units_value and box_units_value > 0 else None
                 hectolitros_sold = hectoliter * units_adjusted if hectoliter else None
 
                 # Crear claves normalizadas
                 store_name_upper = str(store_name).upper()
                 sku_upper = sku.upper()
                 material_code_upper = material_code.upper()
-                
+
                 record_key = f"{date_obj}|{store_name_upper}|{sku_upper}|{material_code_upper}"
-                
+
                 # Calcular hash de la fila
                 row_hash = SalesFileRowHash.calculate_row_hash(
-                    str(date_obj), store_name_upper, f"{sku_upper}|{material_code_upper}",
+                    str(
+                        date_obj), store_name_upper, f"{sku_upper}|{material_code_upper}",
                     int(units), int(orders)
                 )
 
@@ -1109,7 +1154,7 @@ class OptimizedSalesReportProcessorView(APIView):
                     if previous_row_hashes[record_key] == row_hash:
                         # Sin cambios respecto al archivo anterior -> SKIP
                         duplicates_count += 1
-                        
+
                         # Guardar hash para el nuevo archivo
                         row_hashes_buffer.append(SalesFileRowHash(
                             sales_file=sales_file,
@@ -1125,13 +1170,14 @@ class OptimizedSalesReportProcessorView(APIView):
 
                 # === VERIFICAR EN BD ===
                 existing_record = existing_records.get(record_key)
-                
+
                 if existing_record:
                     # Comparar valores
                     existing_units = existing_record['units']
                     existing_hl = existing_record['hectolitros']
-                    new_hl = round(hectolitros_sold, 4) if hectolitros_sold else 0
-                    
+                    new_hl = round(hectolitros_sold,
+                                   4) if hectolitros_sold else 0
+
                     if existing_units == int(units) and abs(existing_hl - new_hl) < 0.0001:
                         # Ya existe igual en BD -> solo guardar hash
                         duplicates_count += 1
@@ -1149,7 +1195,7 @@ class OptimizedSalesReportProcessorView(APIView):
                             'user': user
                         })
                         updated_count += 1
-                    
+
                     # Guardar hash
                     row_hashes_buffer.append(SalesFileRowHash(
                         sales_file=sales_file,
@@ -1175,24 +1221,33 @@ class OptimizedSalesReportProcessorView(APIView):
                     poc_id=poc_data['poc_id'],
                     poc_name=str(poc_data['poc_name']).upper(),
                     poc_homolo=store_name_upper if store_name != poc_data['poc_name'] else None,
-                    poc_city=str(poc_data['poc_city']).upper() if poc_data['poc_city'] else None,
-                    poc_region=str(poc_data['poc_region']).upper() if poc_data['poc_region'] else None,
+                    poc_city=str(poc_data['poc_city']).upper(
+                    ) if poc_data['poc_city'] else None,
+                    poc_region=str(poc_data['poc_region']).upper(
+                    ) if poc_data['poc_region'] else None,
                     sku_padre=sku_upper,
                     nombre_padre=str(product_app['name']).upper(),
                     orders=int(orders),
                     units=int(units),
                     name=str(material['name']).upper(),
-                    name_homologated=str(material['name_homologated']).upper() if material['name_homologated'] else None,
-                    category=str(material['category']).upper() if material['category'] else None,
-                    brand=str(material['brand']).upper() if material['brand'] else None,
+                    name_homologated=str(material['name_homologated']).upper(
+                    ) if material['name_homologated'] else None,
+                    category=str(material['category']).upper(
+                    ) if material['category'] else None,
+                    brand=str(material['brand']).upper(
+                    ) if material['brand'] else None,
                     retornable=material['returnable'],
                     units_assigned=Decimal(str(quantity_float)),
                     units_per_sku=Decimal(str(units_adjusted)),
                     unidades_por_caja=box_units_value,
-                    venta_pack=Decimal(str(venta_pack)) if venta_pack else None,
-                    mililitros=Decimal(str(material['mililiters_per_unit'])) if material['mililiters_per_unit'] else None,
-                    hectolitros=Decimal(str(hectolitros_sold)) if hectolitros_sold else None,
-                    dolars=Decimal(str(venta_unitaria)) if venta_unitaria else None,
+                    venta_pack=Decimal(
+                        str(venta_pack)) if venta_pack else None,
+                    mililitros=Decimal(str(
+                        material['mililiters_per_unit'])) if material['mililiters_per_unit'] else None,
+                    hectolitros=Decimal(
+                        str(hectolitros_sold)) if hectolitros_sold else None,
+                    dolars=Decimal(str(venta_unitaria)
+                                   ) if venta_unitaria else None,
                     week=date_data['week'],
                     year=date_data['year'],
                     month=date_data['month'],
@@ -1202,7 +1257,7 @@ class OptimizedSalesReportProcessorView(APIView):
                 )
 
                 records_buffer.append(record)
-                
+
                 # Guardar hash
                 row_hashes_buffer.append(SalesFileRowHash(
                     sales_file=sales_file,
@@ -1214,7 +1269,7 @@ class OptimizedSalesReportProcessorView(APIView):
                     units=int(units),
                     orders=int(orders)
                 ))
-                
+
                 # Para Excel de respuesta
                 new_records_for_excel.append({
                     'date': str(date_obj),
@@ -1244,21 +1299,25 @@ class OptimizedSalesReportProcessorView(APIView):
 
                 # Flush buffers
                 if len(records_buffer) >= self.BATCH_SIZE:
-                    SalesRecord.objects.bulk_create(records_buffer, batch_size=500)
+                    SalesRecord.objects.bulk_create(
+                        records_buffer, batch_size=500)
                     saved_count += len(records_buffer)
                     records_buffer.clear()
-                    
+
                     if settings.DEBUG:
-                        print(f"   💾 Batch guardado: {saved_count} registros nuevos")
+                        print(
+                            f"   💾 Batch guardado: {saved_count} registros nuevos")
                     gc.collect()
 
                 if len(row_hashes_buffer) >= self.ROW_HASH_BATCH_SIZE:
-                    SalesFileRowHash.objects.bulk_create(row_hashes_buffer, batch_size=1000)
+                    SalesFileRowHash.objects.bulk_create(
+                        row_hashes_buffer, batch_size=1000)
                     row_hashes_buffer.clear()
 
             # Log de progreso
             if settings.DEBUG and processed_rows % self.PROGRESS_LOG_INTERVAL == 0:
-                print(f"   ⏳ Procesado: {processed_rows}/{total_rows} filas ({int(processed_rows/total_rows*100)}%)")
+                print(
+                    f"   ⏳ Procesado: {processed_rows}/{total_rows} filas ({int(processed_rows/total_rows*100)}%)")
 
         # Guardar registros restantes
         if records_buffer:
@@ -1267,7 +1326,8 @@ class OptimizedSalesReportProcessorView(APIView):
             records_buffer.clear()
 
         if row_hashes_buffer:
-            SalesFileRowHash.objects.bulk_create(row_hashes_buffer, batch_size=1000)
+            SalesFileRowHash.objects.bulk_create(
+                row_hashes_buffer, batch_size=1000)
             row_hashes_buffer.clear()
 
         # Ejecutar actualizaciones
@@ -1281,27 +1341,30 @@ class OptimizedSalesReportProcessorView(APIView):
         if previous_file and previous_row_hashes:
             # Claves que estaban en el archivo anterior pero no en el nuevo
             keys_to_delete = set(previous_row_hashes.keys()) - new_file_keys
-            
+
             if keys_to_delete:
                 if settings.DEBUG:
-                    print(f"   🗑️ Detectadas {len(keys_to_delete)} filas para eliminar...")
-                
+                    print(
+                        f"   🗑️ Detectadas {len(keys_to_delete)} filas para eliminar...")
+
                 # Obtener IDs de registros a eliminar
                 ids_to_delete = []
                 for key in keys_to_delete:
                     if key in existing_records:
                         ids_to_delete.append(existing_records[key]['id'])
-                
+
                 if ids_to_delete:
                     # Soft delete en batches
                     batch_size = 1000
                     for i in range(0, len(ids_to_delete), batch_size):
                         batch = ids_to_delete[i:i+batch_size]
-                        SalesRecord.objects.filter(id__in=batch).update(deleted_at=now())
+                        SalesRecord.objects.filter(
+                            id__in=batch).update(deleted_at=now())
                         deleted_count += len(batch)
-                    
+
                     if settings.DEBUG:
-                        print(f"   🗑️ Eliminados (soft delete): {deleted_count} registros")
+                        print(
+                            f"   🗑️ Eliminados (soft delete): {deleted_count} registros")
 
         # Cerrar workbook
         wb.close()
@@ -1324,16 +1387,16 @@ class OptimizedSalesReportProcessorView(APIView):
     def _get_existing_records_lookup(self, dates_in_file=None):
         """
         Obtener diccionario de registros existentes para detección de duplicados.
-        
+
         Retorna un dict con:
         - key: "date|store_name|sku_padre|sku_vtex" (normalizado a upper)
         - value: dict con 'id', 'units', 'hectolitros' para poder comparar y actualizar
-        
+
         Args:
             dates_in_file: Set de fechas presentes en el archivo (para filtrar eficientemente)
         """
         existing_dict = {}
-        
+
         # Si tenemos las fechas del archivo, filtrar solo esas fechas
         # Esto reduce significativamente la cantidad de datos a cargar
         if dates_in_file:
@@ -1345,22 +1408,22 @@ class OptimizedSalesReportProcessorView(APIView):
             from datetime import timedelta
             cutoff_date = now().date() - timedelta(days=60)
             date_filter = {'date__gte': cutoff_date}
-        
+
         for record in SalesRecord.objects.filter(
             deleted_at__isnull=True,
             **date_filter
         ).values_list('id', 'date', 'store_name', 'sku_padre', 'sku_vtex', 'units', 'hectolitros'):
             record_id, date, store_name, sku_padre, sku_vtex, units, hectolitros = record
-            
+
             # Normalizar clave (todo a upper para comparación consistente)
             key = f"{date}|{str(store_name).upper()}|{str(sku_padre).upper()}|{str(sku_vtex).upper()}"
-            
+
             existing_dict[key] = {
                 'id': record_id,
                 'units': units,
                 'hectolitros': float(hectolitros) if hectolitros else 0
             }
-        
+
         return existing_dict
 
     def _get_date_data(self, date_obj):
@@ -1369,7 +1432,7 @@ class OptimizedSalesReportProcessorView(APIView):
             0: 'Lunes', 1: 'Martes', 2: 'Miércoles', 3: 'Jueves',
             4: 'Viernes', 5: 'Sábado', 6: 'Domingo'
         }
-        
+
         return {
             'week': date_obj.isocalendar()[1],
             'year': date_obj.year,
@@ -1383,15 +1446,17 @@ class OptimizedSalesReportProcessorView(APIView):
         """Crear log de upload con rango de fechas."""
         try:
             if result['new_records']:
-                dates = [r['date'] for r in result['new_records'] if r.get('date')]
+                dates = [r['date']
+                         for r in result['new_records'] if r.get('date')]
                 if dates:
                     min_date = min(dates)
                     max_date = max(dates)
-                    
+
                     SalesUploadLog.objects.create(
                         initrowdate=min_date,
                         endrowdate=max_date,
-                        rows_count=result['saved_count'] + result['updated_count'],
+                        rows_count=result['saved_count'] +
+                        result['updated_count'],
                         user=user
                     )
         except Exception as e:
@@ -1402,7 +1467,7 @@ class OptimizedSalesReportProcessorView(APIView):
         """Generar archivo Excel de respuesta."""
         import pandas as pd
         from openpyxl.styles import numbers
-        
+
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         output = BytesIO()
 
@@ -1410,7 +1475,7 @@ class OptimizedSalesReportProcessorView(APIView):
             # Sheet 1: Registros nuevos
             if result['new_records']:
                 df_new = pd.DataFrame(result['new_records'])
-                
+
                 # Renombrar columnas a español
                 spanish_columns = {
                     'date': 'FECHA', 'store_name': 'STORE_NAME', 'poc_id': 'POC',
@@ -1426,9 +1491,11 @@ class OptimizedSalesReportProcessorView(APIView):
                     'week': 'Week', 'year': 'YEAR', 'month': 'MONTH',
                     'day': 'DAY', 'dayname': 'DAY NAME', 'year_month': 'YEAR-MONTH'
                 }
-                
-                df_new = df_new.rename(columns={k: v for k, v in spanish_columns.items() if k in df_new.columns})
-                df_new.to_excel(writer, index=False, sheet_name='Registros Nuevos')
+
+                df_new = df_new.rename(
+                    columns={k: v for k, v in spanish_columns.items() if k in df_new.columns})
+                df_new.to_excel(writer, index=False,
+                                sheet_name='Registros Nuevos')
             else:
                 pd.DataFrame().to_excel(writer, index=False, sheet_name='Registros Nuevos')
 
@@ -1441,12 +1508,13 @@ class OptimizedSalesReportProcessorView(APIView):
                     '# Orders': 'Pedidos', 'error_reason': 'Motivo_Error'
                 }
                 df_errors = df_errors.rename(columns=error_columns)
-                df_errors.to_excel(writer, index=False, sheet_name='Registros con Errores')
+                df_errors.to_excel(writer, index=False,
+                                   sheet_name='Registros con Errores')
 
         output.seek(0)
-        
+
         filename = f'reporte_ventas_{timestamp}.xlsx'
-        
+
         response = HttpResponse(
             output.read(),
             content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -1455,7 +1523,8 @@ class OptimizedSalesReportProcessorView(APIView):
         response['X-Records-Created'] = str(result['saved_count'])
         response['X-Records-Updated'] = str(result['updated_count'])
         response['X-Records-Duplicated'] = str(result['duplicates_count'])
-        response['X-Records-Unprocessed'] = str(len(result['unprocessed_rows']))
+        response['X-Records-Unprocessed'] = str(
+            len(result['unprocessed_rows']))
         response['X-Total-Processed'] = str(total_rows)
         response['X-Processing-Time'] = str(processing_duration)
 
@@ -1465,7 +1534,7 @@ class OptimizedSalesReportProcessorView(APIView):
 class OptimizedSalesRecordDeleteByDateRangeView(APIView):
     """
     Vista optimizada para eliminar registros de SalesRecord por rango de fechas.
-    
+
     Usa SQL raw para borrado masivo eficiente (mucho más rápido que ORM delete).
     """
     permission_classes = [IsAuthenticated]
@@ -1475,7 +1544,7 @@ class OptimizedSalesRecordDeleteByDateRangeView(APIView):
         Eliminar registros de SalesRecord en un rango de fechas usando SQL directo.
         """
         start_time = time.time()
-        
+
         start_date_str = request.query_params.get('start_date')
         end_date_str = request.query_params.get('end_date')
 
@@ -1535,9 +1604,11 @@ class OptimizedSalesRecordDeleteByDateRangeView(APIView):
             )
 
         if settings.DEBUG:
-            print(f"🗑️ Eliminados {deleted_count} registros en {processing_duration}s")
+            print(
+                f"🗑️ Eliminados {deleted_count} registros en {processing_duration}s")
             if invalidated_files > 0:
-                print(f"🔓 Invalidados {invalidated_files} archivos (hashes limpiados para reprocesamiento)")
+                print(
+                    f"🔓 Invalidados {invalidated_files} archivos (hashes limpiados para reprocesamiento)")
 
         return Response({
             'message': f'Se eliminaron {deleted_count} registros',
@@ -1551,12 +1622,12 @@ class OptimizedSalesRecordDeleteByDateRangeView(APIView):
     def _bulk_delete_by_date_range(self, start_date, end_date):
         """
         Ejecutar borrado masivo usando SQL directo.
-        
+
         Mucho más eficiente que ORM delete() para grandes volúmenes.
         """
         # Obtener nombre de la tabla
         table_name = SalesRecord._meta.db_table
-        
+
         with connection.cursor() as cursor:
             # Contar registros primero
             cursor.execute(
@@ -1567,10 +1638,10 @@ class OptimizedSalesRecordDeleteByDateRangeView(APIView):
                 [start_date, end_date]
             )
             count = cursor.fetchone()[0]
-            
+
             if count == 0:
                 return 0
-            
+
             # Opción 1: DELETE directo (más rápido, pero mantiene constraints)
             # Usar DELETE en lugar de TRUNCATE porque necesitamos filtrar por fecha
             cursor.execute(
@@ -1580,15 +1651,14 @@ class OptimizedSalesRecordDeleteByDateRangeView(APIView):
                 """,
                 [start_date, end_date]
             )
-            
-            return count
 
+            return count
 
     def _invalidate_file_hashes(self, start_date, end_date):
         """
         Hard-delete de SalesFileStorage y SalesFileRowHash cuyos rangos de 
         fechas se solapen con el rango eliminado.
-        
+
         Se usa hard_delete (no soft-delete) para ser consistente con el 
         DELETE SQL directo que se hace sobre SalesRecord, y garantizar que 
         los hashes no bloqueen un reprocesamiento futuro.
@@ -1607,7 +1677,7 @@ class OptimizedSalesRecordDeleteByDateRangeView(APIView):
 
         if count > 0:
             file_ids = list(overlapping_files.values_list('id', flat=True))
-            
+
             # Hard-delete de los row hashes asociados (SQL directo)
             row_hash_table = SalesFileRowHash._meta.db_table
             with connection.cursor() as cursor:
@@ -1615,7 +1685,7 @@ class OptimizedSalesRecordDeleteByDateRangeView(APIView):
                     f"DELETE FROM {row_hash_table} WHERE sales_file_id IN %s",
                     [tuple(file_ids)]
                 )
-            
+
             # Hard-delete de los archivos: borrar de S3 y eliminar registro de BD
             for sf in SalesFileStorage.objects.filter(id__in=file_ids):
                 try:
@@ -1634,7 +1704,7 @@ class OptimizedSalesRecordDeleteByDateRangeView(APIView):
 class OptimizedBulkTruncateView(APIView):
     """
     Vista para truncar completamente la tabla SalesRecord.
-    
+
     ADVERTENCIA: Esta operación elimina TODOS los registros.
     Solo usar cuando se necesite limpiar toda la tabla.
     """
@@ -1643,11 +1713,11 @@ class OptimizedBulkTruncateView(APIView):
     def post(self, request):
         """
         Truncar completamente la tabla SalesRecord.
-        
+
         Requiere confirmación explícita: confirm=true
         """
         confirm = request.data.get('confirm', False)
-        
+
         if not confirm:
             return Response(
                 {'error': 'Se requiere confirm=true para ejecutar TRUNCATE'},
@@ -1655,15 +1725,16 @@ class OptimizedBulkTruncateView(APIView):
             )
 
         start_time = time.time()
-        
+
         try:
             deleted_count = self._truncate_table()
-            
+
             end_time = time.time()
             processing_duration = round(end_time - start_time, 3)
 
             if settings.DEBUG:
-                print(f"🗑️ TRUNCATE completado: {deleted_count} registros eliminados en {processing_duration}s")
+                print(
+                    f"🗑️ TRUNCATE completado: {deleted_count} registros eliminados en {processing_duration}s")
 
             return Response({
                 'message': f'Tabla truncada. {deleted_count} registros eliminados.',
@@ -1680,22 +1751,22 @@ class OptimizedBulkTruncateView(APIView):
     def _truncate_table(self):
         """
         Ejecutar TRUNCATE en la tabla.
-        
+
         TRUNCATE es mucho más rápido que DELETE porque:
         - No genera logs de transacción por cada fila
         - Libera espacio inmediatamente
         - Resetea el contador de auto-increment
         """
         table_name = SalesRecord._meta.db_table
-        
+
         with connection.cursor() as cursor:
             # Contar registros primero
             cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
             count = cursor.fetchone()[0]
-            
+
             if count == 0:
                 return 0
-            
+
             # TRUNCATE CASCADE para manejar foreign keys
             # NOTA: Esto eliminará también registros relacionados
             try:
@@ -1703,5 +1774,5 @@ class OptimizedBulkTruncateView(APIView):
             except Exception:
                 # Si TRUNCATE falla (ej: constraints), usar DELETE
                 cursor.execute(f"DELETE FROM {table_name}")
-            
+
             return count
