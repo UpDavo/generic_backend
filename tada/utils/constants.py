@@ -53,8 +53,8 @@ OPERATING_HOURS = {
     5: {'start_hour': 8, 'end_hour': 2, 'crosses_midnight': True},
     # Sábado: 08:00-02:00 (del día siguiente)
     6: {'start_hour': 8, 'end_hour': 2, 'crosses_midnight': True},
-    # Domingo: 08:00-22:00
-    7: {'start_hour': 8, 'end_hour': 22, 'crosses_midnight': False},
+    # Domingo: 08:00-23:00
+    7: {'start_hour': 8, 'end_hour': 23, 'crosses_midnight': False},
 }
 
 # Nombres de días para mensajes
@@ -71,5 +71,5 @@ DAY_SCHEDULES = {
     4: '09:00-01:00',
     5: '08:00-02:00',
     6: '08:00-02:00',
-    7: '08:00-22:00'
+    7: '08:00-23:00'
 }
