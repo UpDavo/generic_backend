@@ -687,7 +687,7 @@ class ReportService:
             'previous_week_comparison_hour': previous_week_comparison_hour
         }
 
-    def send_report_by_email(self, dia_seleccionado, start_week=None, end_week=None, year=None, start_year=None, end_year=None, start_hour=7, end_hour=3):
+    def send_report_by_email(self, dia_seleccionado, start_week=None, end_week=None, year=None, start_year=None, end_year=None, start_hour=None, end_hour=None):
         try:
             # Generar el reporte con los parámetros recibidos
             report_data = self.get_datetime_variation(
@@ -794,7 +794,7 @@ class ReportService:
         except Exception as e:
             print(f"Error al enviar el reporte por email: {e}")
 
-    def send_report_by_whatsapp(self, dia_seleccionado, start_week=None, end_week=None, year=None, start_year=None, end_year=None, start_hour=7, end_hour=3):
+    def send_report_by_whatsapp(self, dia_seleccionado, start_week=None, end_week=None, year=None, start_year=None, end_year=None, start_hour=None, end_hour=None):
         """
         Envía el reporte de tráfico por WhatsApp usando el servicio de WhatsApp.
         Genera una imagen a partir del template HTML y la envía como adjunto.
