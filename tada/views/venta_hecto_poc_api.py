@@ -187,12 +187,6 @@ class VentaHectoPorPocView(APIView):
                     'nombre_dia': day_name,
                 }
 
-        if not result:
-            return Response(
-                {'error': 'No se encontraron datos para el rango de fechas indicado'},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
         # --- Log de consulta ---
         try:
             SalesRecordQueryLog.objects.create(
@@ -367,14 +361,15 @@ class VentaHectoPorPocDownloadView(APIView):
         # Recorrer de nuevo para construir filas (materializar queryset)
         data_list = list(qs)
 
-        if not data_list:
-            return Response(
-                {'error': 'No se encontraron datos para el rango de fechas indicado'},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        # Recopilar fechas únicas ordenadas
-        all_dates = sorted({item['date'] for item in data_list})
+        # Recopilar fechas únicas ordenadas (rango completo, aunque no haya datos)
+        if data_list:
+            all_dates = sorted({item['date'] for item in data_list})
+        else:
+            all_dates = []
+            current = start_date_obj
+            while current <= end_date_obj:
+                all_dates.append(current)
+                current += timedelta(days=1)
 
         # Construir estructura intermedia para pivotar
         if group_by_city:
@@ -422,18 +417,25 @@ class VentaHectoPorPocDownloadView(APIView):
                 row['Total'] = round(total, 2)
                 rows.append(row)
 
-        df = pd.DataFrame(rows)
-
-        # Reordenar columnas: fijas primero, luego fechas, luego Total
         fixed_cols = ['Ciudad', 'POC'] if group_by_city else ['POC']
-        date_cols = [
-            c for c in df.columns if c not in fixed_cols and c != 'Total']
-        df = df[fixed_cols + date_cols + ['Total']]
+        date_col_names = [
+            f"{d.strftime('%Y-%m-%d')} ({DAY_NAMES_ES.get(d.weekday(), '')})"
+            for d in all_dates
+        ]
 
-        # Ordenar por Ciudad (si aplica) y Total descendente
-        sort_cols = ['Ciudad', 'Total'] if group_by_city else ['Total']
-        sort_asc = [True, False] if group_by_city else [False]
-        df = df.sort_values(sort_cols, ascending=sort_asc)
+        if rows:
+            df = pd.DataFrame(rows)
+            # Reordenar columnas: fijas primero, luego fechas, luego Total
+            date_cols = [
+                c for c in df.columns if c not in fixed_cols and c != 'Total']
+            df = df[fixed_cols + date_cols + ['Total']]
+
+            # Ordenar por Ciudad (si aplica) y Total descendente
+            sort_cols = ['Ciudad', 'Total'] if group_by_city else ['Total']
+            sort_asc = [True, False] if group_by_city else [False]
+            df = df.sort_values(sort_cols, ascending=sort_asc)
+        else:
+            df = pd.DataFrame(columns=fixed_cols + date_col_names + ['Total'])
 
         # --- Log ---
         try:
@@ -464,10 +466,8 @@ class VentaHectoPorPocDownloadView(APIView):
 
             worksheet = writer.sheets[sheet_name]
             for idx, col in enumerate(df.columns, 1):
-                max_length = max(
-                    df[col].astype(str).apply(len).max(),
-                    len(str(col))
-                )
+                col_max = df[col].astype(str).apply(len).max() if len(df) else 0
+                max_length = max(col_max, len(str(col)))
                 from openpyxl.utils import get_column_letter
                 worksheet.column_dimensions[get_column_letter(
                     idx)].width = min(max_length + 2, 30)
